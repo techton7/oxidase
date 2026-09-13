@@ -586,7 +586,8 @@ To guarantee predictable runtime behavior and avoid hidden build-pipeline depend
 │                                                        │
 │  Browser Side:                                         │
 │   ├── window.__OXIDASE__.modules["{HASH}"]             │
-│   └── window.__OXIDASE__.watchers: Map<sub_id, cleanup>│
+│   ├── window.__OXIDASE__.watchers: Map<sub_id, cleanup>│
+│   └── window.__OXIDASE__.watch(mode, hash, fn, ...)    │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -613,7 +614,10 @@ If the browser context loses module state (e.g. following full-page navigation o
 
 ### Watcher Wire Protocol & Idempotent Cleanup
 1. **Subscription Registration**: Calling `watch_x(..., emit)` generates a globally unique 64-bit `subscription_id` and returns a `WatcherGuard`.
-2. **Browser Storage**: The JavaScript watcher factory runs and places its cleanup closure into `window.__OXIDASE__.watchers.set(sub_id, cleanup)`.
+2. **Shared Runtime Helper Dispatch**: Rust dispatches a lightweight invocation to `window.__OXIDASE__.watch(mode, module_hash, fn_name, payload, sub_id, dioxus.send)`.
+   - `mode = "immediate"`: invokes `emit` directly to `dioxus.send`.
+   - `mode = "raf"`: buffers micro-events and coalesces delivery via `requestAnimationFrame` at display refresh rate.
+   - Places the composite cleanup closure into `window.__OXIDASE__.watchers.set(sub_id, cleanup)`.
 3. **Continuous Streaming**: The browser watcher invokes `emit(payload)` whenever events occur, transmitting serialized JSON to Dioxus.
 4. **Deterministic Teardown**: When the Rust watcher handle is dropped (or `.stop()` is called):
    - The background Dioxus task is cancelled.
