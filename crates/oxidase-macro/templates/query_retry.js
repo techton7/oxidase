@@ -1,14 +1,7 @@
-(async function() {
-    const mod = window.__OXIDASE__?.modules?.["__MODULE_HASH__"];
-    if (!mod) {
+(function() {
+    if (!window.__OXIDASE__?.query) {
         dioxus.send({ ok: false, error: "MODULE_UNAVAILABLE" });
         return;
     }
-    try {
-        const payload = __PAYLOAD__;
-        const result = await mod.__JS_NAME__(...payload);
-        dioxus.send({ ok: true, data: result });
-    } catch (err) {
-        dioxus.send({ ok: false, error: err.message || String(err), stack: err.stack });
-    }
+    window.__OXIDASE__.query("__MODULE_HASH__", "__JS_NAME__", __PAYLOAD__, dioxus.send, true);
 })();

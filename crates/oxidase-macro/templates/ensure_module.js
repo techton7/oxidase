@@ -2,6 +2,38 @@
     if (!window.__OXIDASE__) window.__OXIDASE__ = { modules: {}, watchers: new Map() };
     if (!window.__OXIDASE__.modules) window.__OXIDASE__.modules = {};
     if (!window.__OXIDASE__.watchers) window.__OXIDASE__.watchers = new Map();
+
+    if (!window.__OXIDASE__.command) {
+        window.__OXIDASE__.command = function(modHash, fnName, payload) {
+            const mod = window.__OXIDASE__.modules[modHash];
+            if (!mod) {
+                console.warn("[oxidase]: Module '" + modHash + "' not found. Browser context may have reloaded.");
+                return;
+            }
+            try {
+                mod[fnName](...payload);
+            } catch (e) {
+                console.error("[oxidase Command Error in " + fnName + "]:", e);
+            }
+        };
+    }
+
+    if (!window.__OXIDASE__.query) {
+        window.__OXIDASE__.query = async function(modHash, fnName, payload, send, isRetry) {
+            const mod = window.__OXIDASE__.modules[modHash];
+            if (!mod) {
+                send({ ok: false, error: isRetry ? "MODULE_UNAVAILABLE" : "MODULE_NOT_FOUND" });
+                return;
+            }
+            try {
+                const result = await mod[fnName](...payload);
+                send({ ok: true, data: result });
+            } catch (err) {
+                send({ ok: false, error: err?.message || String(err), stack: err?.stack });
+            }
+        };
+    }
+
     if (!window.__OXIDASE__.watch) {
         window.__OXIDASE__.watch = function(mode, modHash, fnName, payload, subId, send) {
             const mod = window.__OXIDASE__.modules[modHash];

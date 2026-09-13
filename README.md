@@ -587,6 +587,8 @@ To guarantee predictable runtime behavior and avoid hidden build-pipeline depend
 │  Browser Side:                                         │
 │   ├── window.__OXIDASE__.modules["{HASH}"]             │
 │   ├── window.__OXIDASE__.watchers: Map<sub_id, cleanup>│
+│   ├── window.__OXIDASE__.command(hash, fn, payload)    │
+│   ├── window.__OXIDASE__.query(hash, fn, payload, send)│
 │   └── window.__OXIDASE__.watch(mode, hash, fn, ...)    │
 └────────────────────────────────────────────────────────┘
 ```
