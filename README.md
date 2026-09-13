@@ -585,8 +585,8 @@ To guarantee predictable runtime behavior and avoid hidden build-pipeline depend
 │  IPC Boundary (dioxus::document::eval)                 │
 │                                                        │
 │  Browser Side:                                         │
-│   ├── window.__OXIDASE_MODULES__["{HASH}"]      │
-│   └── window.__OXIDASE_WATCHERS: Map<sub_id, cleanup>   │
+│   ├── window.__OXIDASE__.modules["{HASH}"]             │
+│   └── window.__OXIDASE__.watchers: Map<sub_id, cleanup>│
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -596,7 +596,7 @@ During compilation, `bind_js!` uses `swc_core` to:
 2. Validate signatures and enforce diagnostic invariants.
 3. Strip type annotations, interfaces, and type aliases.
 4. Hash the source file content deterministically.
-5. Invert the module into an isolated IIFE that registers its exports into `window.__OXIDASE_MODULES__["{HASH}"]`.
+5. Invert the module into an isolated IIFE that registers its exports into `window.__OXIDASE__.modules["{HASH}"]`.
 
 ### Hybrid Lazy Loader & Double-Epoch IPC Cache
 To avoid re-evaluating JavaScript code on every function call:
@@ -613,16 +613,16 @@ If the browser context loses module state (e.g. following full-page navigation o
 
 ### Watcher Wire Protocol & Idempotent Cleanup
 1. **Subscription Registration**: Calling `watch_x(..., emit)` generates a globally unique 64-bit `subscription_id` and returns a `WatcherGuard`.
-2. **Browser Storage**: The JavaScript watcher factory runs and places its cleanup closure into `window.__OXIDASE_WATCHERS.set(sub_id, cleanup)`.
+2. **Browser Storage**: The JavaScript watcher factory runs and places its cleanup closure into `window.__OXIDASE__.watchers.set(sub_id, cleanup)`.
 3. **Continuous Streaming**: The browser watcher invokes `emit(payload)` whenever events occur, transmitting serialized JSON to Dioxus.
 4. **Deterministic Teardown**: When the Rust watcher handle is dropped (or `.stop()` is called):
    - The background Dioxus task is cancelled.
    - A synchronous teardown eval is dispatched:
      ```javascript
-     const cleanup = window.__OXIDASE_WATCHERS?.get(sub_id);
+     const cleanup = window.__OXIDASE__?.watchers?.get(sub_id);
      if (cleanup) {
          try { cleanup(); } catch (e) { console.error(e); }
-         window.__OXIDASE_WATCHERS.delete(sub_id);
+         window.__OXIDASE__?.watchers?.delete(sub_id);
      }
      ```
    - Teardown is 100% idempotent: subsequent calls or drops are safe no-ops.

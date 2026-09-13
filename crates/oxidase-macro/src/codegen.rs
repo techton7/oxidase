@@ -27,8 +27,8 @@ pub fn generate_bindings(
     let mut generated_items = Vec::new();
     let mut matched_specs = vec![false; input.items.len()];
 
-    let epoch_ident = quote::format_ident!("__DIOXUS_LOADED_EPOCH_{}", module_hash);
-    let ensure_fn_ident = quote::format_ident!("__dioxus_ensure_module_{}", module_hash);
+    let epoch_ident = quote::format_ident!("__OXIDASE_LOADED_EPOCH_{}", module_hash);
+    let ensure_fn_ident = quote::format_ident!("__oxidase_ensure_module_{}", module_hash);
 
     for export in &analyzed.exports {
         let name_camel = export.name.to_lower_camel_case();

@@ -1,5 +1,5 @@
 (async function() {
-    const mod = window.__DIOXUS_BINDGEN_MODULES__?.["__MODULE_HASH__"];
+    const mod = window.__OXIDASE__?.modules?.["__MODULE_HASH__"];
     if (!mod) {
         dioxus.send({ ok: false, error: "MODULE_UNAVAILABLE" });
         return;

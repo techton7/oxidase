@@ -74,8 +74,8 @@ pub fn clear_js_cache() {
     let _ = std::panic::catch_unwind(|| {
         let _ = dioxus::document::eval(
             r#"
-            if (window.__DIOXUS_BINDGEN_MODULES__) {
-                window.__DIOXUS_BINDGEN_MODULES__ = {};
+            if (typeof window !== "undefined" && window.__OXIDASE__?.modules) {
+                window.__OXIDASE__.modules = {};
             }
             "#,
         );
@@ -120,10 +120,10 @@ pub mod internal {
             let _ = dioxus::document::eval(&format!(
                 r#"
                 (function() {{
-                    const c = window.__DIOXUS_WATCHERS?.get({sub_id});
+                    const c = window.__OXIDASE__?.watchers?.get({sub_id});
                     if (c) {{
-                        try {{ c(); }} catch(e) {{ console.error("[Watcher Cleanup Error]:", e); }}
-                        window.__DIOXUS_WATCHERS.delete({sub_id});
+                        try {{ c(); }} catch(e) {{ console.error("[oxidase Watcher Cleanup Error]:", e); }}
+                        window.__OXIDASE__?.watchers?.delete({sub_id});
                     }}
                 }})();
                 "#
