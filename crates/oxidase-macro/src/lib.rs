@@ -1,9 +1,17 @@
 mod syntax;
 mod analyzer;
 mod codegen;
+mod main_macro;
 
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
+
+/// `#[main]` procedural macro attribute for transparently rewriting `dioxus::launch(...)`
+/// into `::oxidase::launch(...)`.
+#[proc_macro_attribute]
+pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
+    main_macro::expand_main(attr, item)
+}
 
 /// `bind_js!` procedural macro for generating zero-build, low-annotation Rust FFI wrappers
 /// from local static TS/JS bridge files.

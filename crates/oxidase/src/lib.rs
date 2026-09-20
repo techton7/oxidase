@@ -4,7 +4,7 @@
 
 extern crate self as oxidase;
 
-pub use oxidase_macro::bind_js;
+pub use oxidase_macro::{bind_js, main};
 pub use serde;
 pub use serde_json;
 pub use tracing;
@@ -14,8 +14,16 @@ pub use watcher_guard::WatcherGuard;
 
 pub mod runtime;
 
+pub mod dom;
+
+pub mod launch;
+pub use launch::*;
+
+pub mod frame;
+pub mod prelude;
+
 use std::sync::atomic::{AtomicU64, Ordering};
-use dioxus::prelude::*;
+use dioxus::prelude::WritableExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

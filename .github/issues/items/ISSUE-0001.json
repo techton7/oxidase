@@ -1,0 +1,16 @@
+{
+  "id": "ISSUE-0001",
+  "title": "Tracking: Upstream dioxus-native blitz 0.3+ parity and migration path",
+  "symptoms": "dioxus-native 0.7.10 on crates.io pins blitz-dom 0.2.4, conflicting with blitz-dom 0.3.0-beta.2 via stylo servo_style_crate link collision. Also does not inject BaseDocument into Dioxus root context.",
+  "cause": "Upstream DioxusLabs has not published dioxus-native matching blitz-dom 0.3.0-beta.2 + dioxus 0.7.0 on crates.io, leaving a temporary published crate gap.",
+  "solution": "Once upstream publishes dioxus-native with blitz >= 0.3 support: 1) Replace internal launch::native bridge with published dioxus-native. 2) Ensure Document::current() context injection remains unbroken. 3) Preserve #[oxidase::main], Document, and frame APIs without breaking consumer code. In the interim, maintain sovereign in-crate adapter with published blitz-dom 0.3.0-beta.2.",
+  "keys": [
+    "dioxus-native",
+    "blitz-dom",
+    "stylo",
+    "sovereign-launch",
+    "migration"
+  ],
+  "created_at": "2026-09-20T13:12:14Z",
+  "updated_at": "2026-09-20T13:12:14Z"
+}
