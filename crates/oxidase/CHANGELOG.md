@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/techton7/oxidase/compare/oxidase-v0.1.2...oxidase-v0.1.3) - 2026-09-20
+
+### Added
+
+- implement dom surface, native manual frame driving, and launch macro
+
 ## [0.1.1](https://github.com/techton7/dioxus-js-interop/releases/tag/dioxus-js-interop-v0.1.1) - 2026-09-11
 
 ### Added
