@@ -130,3 +130,22 @@ pub fn request_next_frame(
 
 /// In a hosted browser environment driven by `requestAnimationFrame`, manual ticking is a safe no-op.
 pub fn tick(_dt: Duration) {}
+
+/// Guard for an active host redraw requester.
+pub struct HostRedrawGuard;
+
+/// In a browser environment, host redraw is implicitly handled by `requestAnimationFrame`.
+pub fn set_host_redraw_requester(_requester: impl Fn() + 'static) -> HostRedrawGuard {
+    HostRedrawGuard
+}
+
+/// In a browser environment, frame stepping is handled by the browser event loop.
+pub fn step_hosted_frame() -> Duration {
+    Duration::from_millis(16)
+}
+
+/// Returns whether any frame requests are pending.
+pub fn has_pending_frames() -> bool {
+    false
+}
+

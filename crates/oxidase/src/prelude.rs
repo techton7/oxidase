@@ -5,8 +5,9 @@
 
 pub use crate::dom::Document;
 pub use crate::frame::{
-    request_next_frame, start_frame_loop, tick, FrameInfo, FrameLoopError, FrameLoopGuard,
-    FrameRequestGuard,
+    has_pending_frames, request_next_frame, set_host_redraw_requester, start_frame_loop,
+    step_hosted_frame, tick, FrameInfo, FrameLoopError, FrameLoopGuard, FrameRequestGuard,
+    HostRedrawGuard,
 };
 pub use crate::runtime::{get_viewport, measure_rect};
 pub use crate::use_watcher;

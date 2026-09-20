@@ -113,3 +113,85 @@ fn test_spike_hosted_native_thread_safety_and_idle() {
     assert_eq!(*callback_thread_id.borrow(), Some(thread_id));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_hosted_native_frame_redraw_requester_lifecycle() {
+    let redraw_requests = Rc::new(RefCell::new(0usize));
+    let r_req = redraw_requests.clone();
+
+    // Register host redraw requester (simulating window.request_redraw())
+    let redraw_guard = set_host_redraw_requester(move || {
+        *r_req.borrow_mut() += 1;
+    });
+
+    // Initially no frames pending, 0 redraw requests
+    assert_eq!(*redraw_requests.borrow(), 0);
+    assert!(!has_pending_frames());
+
+    // 1. Starting a frame loop triggers the host redraw requester immediately
+    let frame_ticks = Rc::new(RefCell::new(Vec::new()));
+    let f_ticks = frame_ticks.clone();
+    let loop_guard = start_frame_loop(move |info| {
+        f_ticks.borrow_mut().push(info.delta);
+    })
+    .expect("start_frame_loop should succeed");
+
+    assert!(has_pending_frames());
+    assert_eq!(*redraw_requests.borrow(), 1, "start_frame_loop must request host redraw");
+
+    // 2. Host dispatches a redraw via step_hosted_frame()
+    let dt = step_hosted_frame();
+    assert!(dt >= Duration::from_millis(1));
+    assert_eq!(frame_ticks.borrow().len(), 1);
+    // Because the loop is still active, step_hosted_frame requested the NEXT frame redraw
+    assert_eq!(*redraw_requests.borrow(), 2, "active loop must schedule next redraw");
+
+    // 3. Host dispatches a second redraw
+    step_hosted_frame();
+    assert_eq!(frame_ticks.borrow().len(), 2);
+    assert_eq!(*redraw_requests.borrow(), 3);
+
+    // 4. Cancel the loop
+    drop(loop_guard);
+    assert!(!has_pending_frames());
+
+    // 5. Subsequent step_hosted_frame finds no pending frames and enters IDLE (does NOT request redraw)
+    let requests_before = *redraw_requests.borrow();
+    step_hosted_frame();
+    assert_eq!(*redraw_requests.borrow(), requests_before, "idle state must not request redraw");
+
+    // Dropping the host redraw guard cleans up cleanly
+    drop(redraw_guard);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_hosted_native_one_shot_request_and_idle() {
+    let redraw_requests = Rc::new(RefCell::new(0usize));
+    let r_req = redraw_requests.clone();
+
+    let _redraw_guard = set_host_redraw_requester(move || {
+        *r_req.borrow_mut() += 1;
+    });
+
+    let one_shot_fired = Rc::new(RefCell::new(false));
+    let osf = one_shot_fired.clone();
+
+    // 1. Request single frame -> requests host redraw
+    let _guard = request_next_frame(move |_now| {
+        *osf.borrow_mut() = true;
+    })
+    .expect("request_next_frame should succeed");
+
+    assert!(has_pending_frames());
+    assert_eq!(*redraw_requests.borrow(), 1);
+
+    // 2. Dispatch the frame
+    step_hosted_frame();
+    assert!(*one_shot_fired.borrow(), "one shot callback must execute");
+    assert!(!has_pending_frames(), "one-shot must be drained after execution");
+
+    // 3. After single execution, system is idle: does NOT request another redraw
+    assert_eq!(*redraw_requests.borrow(), 1, "completed one-shot must not schedule another redraw");
+}
+

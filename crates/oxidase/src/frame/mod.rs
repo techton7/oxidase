@@ -13,12 +13,18 @@ pub use types::{FrameInfo, FrameLoopError, FrameLoopGuard, FrameRequestGuard};
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
-pub use web::{request_next_frame, start_frame_loop, tick};
+pub use web::{
+    has_pending_frames, request_next_frame, set_host_redraw_requester, start_frame_loop,
+    step_hosted_frame, tick, HostRedrawGuard,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{request_next_frame, start_frame_loop, tick};
+pub use native::{
+    has_pending_frames, request_next_frame, set_host_redraw_requester, start_frame_loop,
+    step_hosted_frame, tick, HostRedrawGuard,
+};
 
 #[cfg(test)]
 mod tests {

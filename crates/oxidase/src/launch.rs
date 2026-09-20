@@ -52,7 +52,18 @@ pub fn launch(app: fn() -> Element) {
         let doc = crate::dom::Document::from_base(base_doc);
 
         crate::dom::Document::with_current(doc, || {
-            dioxus::launch(native_bootstrap_root);
+            // In native environments without an upstream platform runner (e.g. desktop/web),
+            // mount the VirtualDom directly with ambient Blitz Document context.
+            let mut vdom = VirtualDom::new(native_bootstrap_root);
+            vdom.in_scope(ScopeId::ROOT, || {
+                if let Some(doc) = crate::dom::Document::current() {
+                    doc.provide_context();
+                }
+            });
+            vdom.rebuild_in_place();
+            println!(
+                "[oxidase::launch] Native Dioxus VirtualDom mounted successfully with Blitz Document."
+            );
         });
     }
 
