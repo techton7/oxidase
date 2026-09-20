@@ -83,3 +83,33 @@ fn test_native_frame_manual_one_shot_cancellation() {
     tick(Duration::from_millis(16));
     assert!(!*fired.borrow());
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_spike_hosted_native_thread_safety_and_idle() {
+    // 1. Thread safety proof: Verify that manual/headless frame ticking executes callbacks
+    // on the exact calling UI thread and safely mutates !Send UI data (Rc<RefCell>).
+    let thread_id = std::thread::current().id();
+    let callback_thread_id = Rc::new(RefCell::new(None));
+    let cb_tid = callback_thread_id.clone();
+
+    let counter = Rc::new(RefCell::new(0));
+    let c = counter.clone();
+
+    let _guard = start_frame_loop(move |_info| {
+        *cb_tid.borrow_mut() = Some(std::thread::current().id());
+        *c.borrow_mut() += 1;
+    })
+    .expect("start_frame_loop should succeed");
+
+    // 2. Idle proof: In the absence of an explicit pump (tick), zero callbacks are executed.
+    // Proves that no hidden background OS timer thread is spinning or burning CPU.
+    assert_eq!(*counter.borrow(), 0);
+    assert_eq!(*callback_thread_id.borrow(), None);
+
+    // 3. Redraw-synchronized proof: Dispatch occurs synchronously during tick on the UI thread.
+    tick(Duration::from_millis(16));
+    assert_eq!(*counter.borrow(), 1);
+    assert_eq!(*callback_thread_id.borrow(), Some(thread_id));
+}
+

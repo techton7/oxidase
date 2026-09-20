@@ -26,8 +26,15 @@ fn native_bootstrap_root() -> Element {
 /// `Document` state and injects typed [`crate::dom::Document`] into root Dioxus context
 /// via `native_bootstrap_root` before invoking `dioxus::launch`.
 ///
-/// Note: Full sovereign windowed native launching is pending upstream release of
-/// `dioxus-native` / `dioxus-native-dom` compatible with `blitz-dom 0.3.0-beta.2` and `dioxus 0.7.x`.
+/// Note on Native & Frame Looping (Spike Findings):
+/// 1. Sovereign windowed launching requires an active platform event loop (e.g. Winit via `dioxus-native`).
+///    Without a platform runner (such as `dioxus-desktop` or `dioxus-native`), calling `dioxus::launch` directly
+///    panics at runtime with "No platform feature enabled".
+/// 2. Hosted native frame auto-looping cannot be safely synthesized via timers inside `launch` or `#[oxidase::main]`
+///    without breaking redraw alignment with VSync. True redraw truth belongs in the sovereign window's
+///    `WindowEvent::RedrawRequested` cycle, and is therefore deferred pending upstream `dioxus-native` parity (ISSUE-0001).
+/// 3. For tests, headless environments, and current native execution, use deterministic manual ticking via
+///    [`crate::frame::tick`].
 pub fn launch(app: fn() -> Element) {
     #[cfg(target_arch = "wasm32")]
     {
