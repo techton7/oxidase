@@ -9,10 +9,10 @@ Internal, un-published (`publish = false`) test harness and dogfooding applicati
 `oxidase-native-runner` proves real hosted-native frame driving end-to-end:
 - **Core Framework**: Dioxus 0.7.10 VirtualDOM
 - **Render Engine**: Blitz 0.3.0-beta.2 (Vello GPU Metal/Vulkan backend)
-- **Window Host**: Winit 0.31 via in-repo `dioxus-native`
+- **Window Host**: Winit 0.31 via forked `dioxus-native` (`https://github.com/techton7/blitz.git`, tag `v0.3.0-alpha.1`)
 - **Frame Driver**: `oxidase::frame::set_host_redraw_requester` + `oxidase::frame::step_hosted_frame` on `WindowEvent::RedrawRequested`
 
-It isolates local monorepo path dependencies ([`blitz/packages/dioxus-native`](../../../../blitz/packages/dioxus-native)) from the published `crates/oxidase` crate, keeping `crates/oxidase` 100% clean for crates.io publication.
+It follows the workspace-wide internal native lane policy, pinning the unreleased Dioxus Native runtime to a reproducible **`git + tag` snapshot** (`v0.3.0-alpha.1`) rather than local path dependencies, keeping `crates/oxidase` 100% clean for crates.io publication.
 
 ---
 
@@ -66,6 +66,6 @@ When testing native graphics, frame rates vary significantly depending on the Ru
 util/oxidase/
 ├── Cargo.toml                  # members = ["crates/oxidase", "crates/oxidase-macro"]
 │                               # exclude = ["crates/oxidase-native-runner"]
-├── crates/oxidase/             # [PUBLISHABLE] Pure crates.io FFI engine (no local path deps)
-└── crates/oxidase-native-runner/ # [INTERNAL] publish = false test harness (links local dioxus-native)
+├── crates/oxidase/             # [PUBLISHABLE] Pure crates.io FFI engine (zero unreleased deps)
+└── crates/oxidase-native-runner/ # [INTERNAL] publish = false test harness (pinned to git+tag blitz snapshot)
 ```

@@ -27,8 +27,3 @@ proc-macro2 = "1.0"
 heck = "0.5"
 swc_core = { version = "78.0", features = ["common", "ecma_parser", "ecma_ast", "ecma_visit", "ecma_codegen", "ecma_transforms_typescript"] }
 
-[patch.crates-io]
-blitz-shell = { path = "../../blitz/packages/blitz-shell" }
-blitz-dom = { path = "../../blitz/packages/blitz-dom" }
-blitz-traits = { path = "../../blitz/packages/blitz-traits" }
-blitz-paint = { path = "../../blitz/packages/blitz-paint" }

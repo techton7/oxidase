@@ -78,6 +78,7 @@ dependencies = [
 [[package]]
 name = "accesskit_xplat"
 version = "0.1.1"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -437,6 +438,7 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -447,7 +449,7 @@ dependencies = [
  "color",
  "cssparser",
  "cursor-icon",
- "debug_timer 0.1.3",
+ "debug_timer 0.1.3 (git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1)",
  "euclid",
  "html-escape",
  "image",
@@ -481,6 +483,7 @@ dependencies = [
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -491,6 +494,7 @@ dependencies = [
 [[package]]
 name = "blitz-net"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "blitz-traits",
  "data-url",
@@ -502,6 +506,7 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "anyrender",
  "anyrender_svg",
@@ -522,6 +527,7 @@ dependencies = [
 [[package]]
 name = "blitz-shell"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "accesskit",
  "accesskit_xplat",
@@ -544,6 +550,7 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "atomic_refcell",
  "bitflags",
@@ -1046,12 +1053,13 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 
 [[package]]
 name = "derive_more"
@@ -1323,6 +1331,7 @@ dependencies = [
 [[package]]
 name = "dioxus-native"
 version = "0.7.0"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "android-activity",
  "anyrender",
@@ -1357,6 +1366,7 @@ dependencies = [
 [[package]]
 name = "dioxus-native-dom"
 version = "0.7.0"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -4600,7 +4610,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4819,6 +4829,7 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.1#f73d4970ee80f3b72569195431b943273551b7cf"
 dependencies = [
  "bitflags",
  "stylo",
@@ -5270,10 +5281,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5291,7 +5302,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8c27177b12a6399ffc08b98f76f7c9a1f4fe9fc967c784c5a071fa8d93cf7e1"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
