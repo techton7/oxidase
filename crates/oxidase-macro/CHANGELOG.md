@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/techton7/oxidase/compare/oxidase-macro-v0.1.3...oxidase-macro-v0.1.4) - 2026-09-21
+
+### Added
+
+- support zero-wiring native hosted bootstrap via `#[oxidase::main]`
+
 ## [0.1.1](https://github.com/techton7/dioxus-js-interop/releases/tag/dioxus-js-interop-macro-v0.1.1) - 2026-09-11
 
 ### Added

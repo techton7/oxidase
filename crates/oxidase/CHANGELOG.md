@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/techton7/oxidase/compare/oxidase-v0.1.3...oxidase-v0.1.4) - 2026-09-21
+
+### Added
+
+- implement high-level ergonomic prelude (`use_frame`, `next_frame`, `FrameInfo`) with low-level runtime control isolated in `oxidase::frame::*`
+- add zero-wiring hosted native frame loop support via `#[oxidase::main]` and `oxidase-native-runner`
+
 ## [0.1.3](https://github.com/techton7/oxidase/compare/oxidase-v0.1.2...oxidase-v0.1.3) - 2026-09-20
 
 ### Added
