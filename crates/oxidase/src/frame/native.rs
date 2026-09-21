@@ -27,7 +27,7 @@ struct LoopSubscriber {
 
 struct OneShotRequest {
     active: Rc<Cell<bool>>,
-    callback: Rc<RefCell<Option<Box<dyn FnOnce(Duration)>>>>,
+    callback: Rc<RefCell<Option<Box<dyn FnOnce(FrameInfo)>>>>,
 }
 
 /// Guard for an active host redraw requester.
@@ -133,7 +133,7 @@ pub fn start_frame_loop(
 ///
 /// Dropping or cancelling the returned [`FrameRequestGuard`] prevents execution.
 pub fn request_next_frame(
-    on_frame: impl FnOnce(Duration) + 'static,
+    on_frame: impl FnOnce(FrameInfo) + 'static,
 ) -> Result<FrameRequestGuard, FrameLoopError> {
     FRAME_STATE.with(|cell| {
         let mut state = cell.borrow_mut();
@@ -141,7 +141,7 @@ pub fn request_next_frame(
         state.next_id += 1;
 
         let active = Rc::new(Cell::new(true));
-        let callback = Rc::new(RefCell::new(Some(Box::new(on_frame) as Box<dyn FnOnce(Duration)>)));
+        let callback = Rc::new(RefCell::new(Some(Box::new(on_frame) as Box<dyn FnOnce(FrameInfo)>)));
 
         state.one_shot_requests.insert(
             id,
@@ -267,17 +267,18 @@ pub fn tick(dt: Duration) {
         (now, one_shots, loops)
     });
 
+    let info = FrameInfo { now, delta: dt };
+
     // 1. Dispatch one-shots
     for (_, req) in one_shots {
         if req.active.get() {
             if let Some(cb) = req.callback.borrow_mut().take() {
-                cb(now);
+                cb(info);
             }
         }
     }
 
     // 2. Dispatch recurring loops
-    let info = FrameInfo { now, delta: dt };
     for (_id, active, cb) in loops {
         if active.get() {
             cb.borrow_mut()(info);

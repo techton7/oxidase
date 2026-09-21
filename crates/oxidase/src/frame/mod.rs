@@ -1,14 +1,24 @@
 //! Host frame scheduling and timing utility.
 //!
-//! Provides platform-normalized frame callbacks with `Duration` timestamps,
+//! Provides platform-normalized frame callbacks with [`FrameInfo`] timestamps,
 //! drop-driven cancellation, and manual/headless ticking support.
 //!
+//! - **High-Level DX (Re-exported in [`oxidase::prelude`](crate::prelude))**:
+//!   [`use_frame`] (declarative continuous animation hook) and [`next_frame`]
+//!   (ergonomic async VSync yield returning [`FrameInfo`]).
+//! - **Low-Level Runtime Primitives (Under [`oxidase::frame`](crate::frame))**:
+//!   [`start_frame_loop`], [`request_next_frame`], [`FrameLoopError`], [`FrameLoopGuard`],
+//!   [`FrameRequestGuard`], and [`tick`].
 //! - On Web (`wasm32`), this drives via browser `requestAnimationFrame`.
-//! - On Native, this provides a deterministic manual/headless frame registry via [`tick`].
-//!   Hosted auto-looping (VSync/Winit display link) is deferred to a future milestone (tracked in `ISSUE-0001`).
+//! - On Native (hosted), this integrates with OS VSync via `WindowEvent::RedrawRequested`
+//!   and [`step_hosted_frame`].
+//! - On Native (headless/tests), this provides deterministic manual ticking via [`tick`].
 
 mod types;
 pub use types::{FrameInfo, FrameLoopError, FrameLoopGuard, FrameRequestGuard};
+
+mod hooks;
+pub use hooks::{next_frame, use_frame, NextFrameFuture};
 
 #[cfg(target_arch = "wasm32")]
 mod web;

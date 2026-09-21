@@ -1,6 +1,6 @@
 //! Web (WASM) frame driver implementation backed by browser `requestAnimationFrame`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -8,6 +8,10 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 use super::types::{FrameInfo, FrameLoopError, FrameLoopGuard, FrameRequestGuard};
+
+thread_local! {
+    static LAST_WEB_RAF_MS: Cell<Option<f64>> = Cell::new(None);
+}
 
 /// Starts an ongoing animation frame loop driven by `window.requestAnimationFrame`.
 pub fn start_frame_loop(
@@ -37,6 +41,7 @@ pub fn start_frame_loop(
         let prev = *last_time_ms.borrow();
         let dt_ms = if prev > 0.0 { (timestamp - prev).max(0.0) } else { 0.0 };
         *last_time_ms.borrow_mut() = timestamp;
+        LAST_WEB_RAF_MS.with(|c| c.set(Some(timestamp)));
 
         let info = FrameInfo {
             now: Duration::from_secs_f64(timestamp / 1000.0),
@@ -82,7 +87,7 @@ pub fn start_frame_loop(
 
 /// Requests a single execution of the callback on the next animation frame.
 pub fn request_next_frame(
-    on_frame: impl FnOnce(Duration) + 'static,
+    on_frame: impl FnOnce(FrameInfo) + 'static,
 ) -> Result<FrameRequestGuard, FrameLoopError> {
     let window = web_sys::window().ok_or(FrameLoopError::UnsupportedHost)?;
 
@@ -99,8 +104,21 @@ pub fn request_next_frame(
     *closure_clone.borrow_mut() = Some(Closure::wrap(Box::new(move |timestamp: f64| {
         let _ = raf_id_cell.borrow_mut().take();
         let _ = closure_holder.borrow_mut().take();
+
+        let prev_ms = LAST_WEB_RAF_MS.with(|c| c.get());
+        let dt_ms = match prev_ms {
+            Some(prev) if prev > 0.0 => (timestamp - prev).max(0.0),
+            _ => 16.666_667,
+        };
+        LAST_WEB_RAF_MS.with(|c| c.set(Some(timestamp)));
+
+        let info = FrameInfo {
+            now: Duration::from_secs_f64(timestamp / 1000.0),
+            delta: Duration::from_secs_f64(dt_ms / 1000.0),
+        };
+
         if let Some(cb) = on_frame_cell.borrow_mut().take() {
-            cb(Duration::from_secs_f64(timestamp / 1000.0));
+            cb(info);
         }
     }) as Box<dyn FnMut(f64)>));
 

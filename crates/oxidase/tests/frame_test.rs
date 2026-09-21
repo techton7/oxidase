@@ -1,13 +1,15 @@
 //! Integration tests for `oxidase::frame` and `oxidase::prelude`.
 
-use oxidase::prelude::*;
+use oxidase::frame::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
 #[test]
-fn test_prelude_reexports_availability() {
-    // 1. Types are exported and constructible
+fn test_prelude_high_level_exports_availability() {
+    use oxidase::prelude::*;
+
+    // 1. High-level types and hooks are exported in prelude
     let info = FrameInfo {
         now: Duration::from_millis(100),
         delta: Duration::from_millis(16),
@@ -15,7 +17,13 @@ fn test_prelude_reexports_availability() {
     assert_eq!(info.now.as_millis(), 100);
     assert_eq!(info.delta.as_millis(), 16);
 
-    // 2. Error types
+    let _ = next_frame;
+    let _: fn(fn(FrameInfo)) = use_frame;
+}
+
+#[test]
+fn test_frame_module_low_level_exports_availability() {
+    // 2. Low-level error types and primitives are under oxidase::frame
     let err = FrameLoopError::RuntimeUnavailable;
     assert_eq!(err, FrameLoopError::RuntimeUnavailable);
 
@@ -53,14 +61,19 @@ fn test_native_frame_manual_one_shot_request() {
     let fired = Rc::new(RefCell::new(false));
     let f = fired.clone();
 
-    let _guard = request_next_frame(move |_now| {
+    let received_delta = Rc::new(RefCell::new(Duration::ZERO));
+    let rd = received_delta.clone();
+
+    let _guard = request_next_frame(move |info| {
         *f.borrow_mut() = true;
+        *rd.borrow_mut() = info.delta;
     })
     .expect("request_next_frame should succeed in manual/headless mode");
 
     assert!(!*fired.borrow());
     tick(Duration::from_millis(16));
     assert!(*fired.borrow());
+    assert_eq!(*received_delta.borrow(), Duration::from_millis(16));
 
     // Does not fire again on second tick
     *fired.borrow_mut() = false;
@@ -74,7 +87,7 @@ fn test_native_frame_manual_one_shot_cancellation() {
     let fired = Rc::new(RefCell::new(false));
     let f = fired.clone();
 
-    let guard = request_next_frame(move |_now| {
+    let guard = request_next_frame(move |_info| {
         *f.borrow_mut() = true;
     })
     .expect("request_next_frame should succeed in manual/headless mode");
@@ -194,4 +207,81 @@ fn test_hosted_native_one_shot_request_and_idle() {
     // 3. After single execution, system is idle: does NOT request another redraw
     assert_eq!(*redraw_requests.borrow(), 1, "completed one-shot must not schedule another redraw");
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_next_frame_future_execution_and_cancellation() {
+    use std::pin::Pin;
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    unsafe fn clone(_: *const ()) -> RawWaker {
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    }
+    unsafe fn wake(_: *const ()) {}
+    unsafe fn wake_by_ref(_: *const ()) {}
+    unsafe fn vtable_drop(_: *const ()) {}
+    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, vtable_drop);
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+    let mut cx = Context::from_waker(&waker);
+
+    // 1. Initial poll registers the one-shot and returns Pending
+    let mut fut = next_frame();
+    assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Pending);
+    assert!(has_pending_frames());
+
+    // 2. Tick frame advances clock and delivers FrameInfo
+    tick(Duration::from_millis(16));
+
+    // 3. Second poll resolves to Ready(FrameInfo)
+    match Pin::new(&mut fut).poll(&mut cx) {
+        Poll::Ready(info) => {
+            assert_eq!(info.delta, Duration::from_millis(16));
+            assert!(info.now >= Duration::from_millis(16));
+        }
+        Poll::Pending => panic!("next_frame should be ready after tick"),
+    }
+
+    // 4. Cancellation proof: dropping future cancels request
+    let mut fut2 = next_frame();
+    assert_eq!(Pin::new(&mut fut2).poll(&mut cx), Poll::Pending);
+    assert!(has_pending_frames());
+    drop(fut2);
+    assert!(!has_pending_frames(), "dropping next_frame future must cancel pending request");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_use_frame_virtual_dom_lifecycle() {
+    use dioxus::prelude::*;
+
+    let frame_count = Rc::new(RefCell::new(0usize));
+    let fc = frame_count.clone();
+
+    #[component]
+    fn FrameApp(fc: Rc<RefCell<usize>>) -> Element {
+        use_frame(move |_info| {
+            *fc.borrow_mut() += 1;
+        });
+        rsx! { div {} }
+    }
+
+    let mut dom = VirtualDom::new_with_props(FrameApp, FrameAppProps { fc });
+    dom.rebuild_in_place();
+
+    assert_eq!(*frame_count.borrow(), 0);
+    assert!(has_pending_frames());
+
+    // Tick 3 frames
+    tick(Duration::from_millis(16));
+    tick(Duration::from_millis(16));
+    tick(Duration::from_millis(16));
+    assert_eq!(*frame_count.borrow(), 3);
+
+    // Dropping VirtualDom drops scope hooks and unregisters subscriber
+    drop(dom);
+    assert!(!has_pending_frames());
+    tick(Duration::from_millis(16));
+    assert_eq!(*frame_count.borrow(), 3, "unmounted component must not receive ticks");
+}
+
 

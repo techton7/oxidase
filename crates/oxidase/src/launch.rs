@@ -19,22 +19,41 @@ fn native_bootstrap_root() -> Element {
     }
 }
 
+/// Ensures ambient native Document context is active, initializing with default BaseDocument if none exists.
+pub fn ensure_document_context() {
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    {
+        use blitz_dom::{BaseDocument, DocumentConfig};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        if crate::dom::Document::current().is_none() {
+            let base_doc = Rc::new(RefCell::new(BaseDocument::new(DocumentConfig::default())));
+            dioxus::prelude::provide_context(crate::dom::Document::from_base(base_doc));
+        }
+        if let Some(doc) = crate::dom::Document::current() {
+            doc.provide_context();
+        }
+    }
+}
+
+/// Helper to bind the active host redraw requester.
+pub fn bind_host_redraw_requester(request_redraw: impl Fn() + 'static) -> crate::frame::HostRedrawGuard {
+    crate::frame::set_host_redraw_requester(request_redraw)
+}
+
+/// Helper to step a single hosted native frame.
+pub fn step_hosted_frame() -> std::time::Duration {
+    crate::frame::step_hosted_frame()
+}
+
 /// Launch a Dioxus application with ambient cross-platform DOM capability.
 ///
-/// On Web targets (`wasm32`), this delegates to `dioxus::launch(app)`.
-/// On Native targets with the `native` feature enabled, this binds thread-local native
-/// `Document` state and injects typed [`crate::dom::Document`] into root Dioxus context
-/// via `native_bootstrap_root` before invoking `dioxus::launch`.
-///
-/// Note on Native & Frame Looping (Spike Findings):
-/// 1. Sovereign windowed launching requires an active platform event loop (e.g. Winit via `dioxus-native`).
-///    Without a platform runner (such as `dioxus-desktop` or `dioxus-native`), calling `dioxus::launch` directly
-///    panics at runtime with "No platform feature enabled".
-/// 2. Hosted native frame auto-looping cannot be safely synthesized via timers inside `launch` or `#[oxidase::main]`
-///    without breaking redraw alignment with VSync. True redraw truth belongs in the sovereign window's
-///    `WindowEvent::RedrawRequested` cycle, and is therefore deferred pending upstream `dioxus-native` parity (ISSUE-0001).
-/// 3. For tests, headless environments, and current native execution, use deterministic manual ticking via
-///    [`crate::frame::tick`].
+/// - On Web targets (`wasm32`), delegates to `dioxus::launch(app)` backed by browser RAF.
+/// - On Native targets with the `native` feature enabled, binds ambient `Document` state and
+///   mounts in-memory VirtualDom for headless execution/testing.
+/// - For full sovereign desktop window execution with automatic VSync frame loop injection,
+///   use `#[oxidase::main]`.
 pub fn launch(app: fn() -> Element) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -52,8 +71,6 @@ pub fn launch(app: fn() -> Element) {
         let doc = crate::dom::Document::from_base(base_doc);
 
         crate::dom::Document::with_current(doc, || {
-            // In native environments without an upstream platform runner (e.g. desktop/web),
-            // mount the VirtualDom directly with ambient Blitz Document context.
             let mut vdom = VirtualDom::new(native_bootstrap_root);
             vdom.in_scope(ScopeId::ROOT, || {
                 if let Some(doc) = crate::dom::Document::current() {
@@ -62,7 +79,7 @@ pub fn launch(app: fn() -> Element) {
             });
             vdom.rebuild_in_place();
             println!(
-                "[oxidase::launch] Native Dioxus VirtualDom mounted successfully with Blitz Document."
+                "[oxidase::launch] Native Dioxus VirtualDom mounted successfully in headless mode."
             );
         });
     }
