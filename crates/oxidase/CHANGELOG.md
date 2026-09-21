@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/techton7/oxidase/compare/oxidase-v0.1.3...oxidase-v0.1.4) - 2026-09-21
+
+### Added
+
+- *(frame)* implement 3-tier frame architecture with hosted native support
+
+### Other
+
+- *(frame)* add hosted native spike isolation test and clarify launch constraints
+
 ## [0.1.3](https://github.com/techton7/oxidase/compare/oxidase-v0.1.2...oxidase-v0.1.3) - 2026-09-20
 
 ### Added
