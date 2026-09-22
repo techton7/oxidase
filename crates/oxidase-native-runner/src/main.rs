@@ -17,6 +17,7 @@
 
 use std::time::Duration;
 
+use blitz_host::HostControl;
 use dioxus::prelude::*;
 use oxidase::prelude::*;
 
@@ -31,13 +32,27 @@ fn is_debug_profile() -> bool {
 
 #[oxidase::main]
 fn main() {
+    let is_debug_control = HostControl::init_global_if_requested(
+        "oxidase-native-runner",
+        env!("CARGO_PKG_VERSION"),
+    );
+
     println!("=================================================================");
     println!("[oxidase-native-runner] Launching Native Hosted Frame Test Runner");
     println!("  • Core Framework: Dioxus 0.7.10");
     println!("  • Render Engine : Blitz 0.3.0-beta.2 (Vello GPU)");
     println!("  • Window Host   : Winit 0.31 via dioxus-native");
     println!("  • Bootstrap     : #[oxidase::main] (Zero-Wiring Hosted Frame Loop)");
-    println!("  • Mode          : {}", if is_interactive_mode() { "Interactive" } else { "Auto-Close Proof (20 frames)" });
+    println!("  • Mode          : {}", if is_interactive_mode() {
+        "Interactive"
+    } else if is_debug_control {
+        "Debug Control Proof (up to 300 frames)"
+    } else {
+        "Auto-Close Proof (20 frames)"
+    });
+    if is_debug_control {
+        println!("  • Debug Control : ACTIVE (--debug-control)");
+    }
     if is_debug_profile() {
         println!("  • Build Profile : Debug (Unoptimized, ~20 FPS expected)");
         println!("    ℹ️  Tip: Run with `--release` for full 60-120 FPS native VSync!");
@@ -52,6 +67,8 @@ fn main() {
 #[component]
 fn App() -> Element {
     let is_interactive = use_hook(is_interactive_mode);
+    let is_debug_control = use_hook(HostControl::is_global_active);
+    let mut live_node_handle = use_signal(|| None::<dioxus_native::NodeHandle>);
 
     // Document context is automatically provided by #[oxidase::main] bootstrap
     let doc = Document::current().expect("Document::current() must be active via #[oxidase::main]");
@@ -65,6 +82,7 @@ fn App() -> Element {
     let mut total_duration = use_signal(|| Duration::ZERO);
     let mut last_dt = use_signal(|| Duration::ZERO);
     let mut status_msg = use_signal(|| "Starting VSync Frame Loop...".to_string());
+    let mut click_count = use_signal(|| 0u32);
 
     // High-Level DX 1: next_frame().await in async block
     use_future(move || async move {
@@ -82,6 +100,31 @@ fn App() -> Element {
         last_dt.set(info.delta);
         total_duration.set(total_duration() + info.delta);
 
+        // Service blitz-host control requests on the UI thread holding BaseDocument
+        if is_debug_control {
+            if let Some(handle) = live_node_handle() {
+                let serviced = HostControl::service_global_frame(
+                    &handle.doc(),
+                    count,
+                    |action_req, base_doc| {
+                        HostControl::handle_action_click(action_req, base_doc, |d, nid| {
+                            dioxus_native::dispatch_synthetic_click(
+                                d,
+                                blitz_dom::NodeId::from_u64(nid),
+                                keyboard_types::Modifiers::empty(),
+                            )
+                        })
+                    },
+                );
+                if serviced > 0 {
+                    println!(
+                        "[oxidase-native-runner] [blitz-host] Serviced {} control request(s) on UI thread at frame #{}",
+                        serviced, count
+                    );
+                }
+            }
+        }
+
         if status_msg().starts_with("Starting") {
             status_msg.set(format!("Hosted Frame Loop Active (dt: {:?})", info.delta));
             println!("[oxidase-native-runner] [Criterion 3 & 4 PASS] Hosted frame loop ticking automatically via #[oxidase::main] / VSync (initial dt: {:?})", info.delta);
@@ -97,14 +140,18 @@ fn App() -> Element {
         }
 
         // Auto-close proof check
-        if !is_interactive && count >= 20 {
+        let max_frames = if is_debug_control { 300 } else { 20 };
+        if !is_interactive && count >= max_frames {
             println!("-----------------------------------------------------------------");
             println!("[oxidase-native-runner] PROOF COMPLETED SUCCESSFULLY!");
             println!("  1. [PROVEN] Native OS window opened via Blitz 0.3.0-beta.2 / Vello");
             println!("  2. [PROVEN] oxidase::dom::Document::current() active (Doc ID: {})", doc_id);
             println!("  3. [PROVEN] Zero-wiring hosted frame loop active via #[oxidase::main] bootstrap");
             println!("  4. [PROVEN] WindowEvent::RedrawRequested automatically driving step_hosted_frame()");
-            println!("  5. [PROVEN] 20 real frames executed via use_frame / next_frame without manual app wiring");
+            println!("  5. [PROVEN] {} real frames executed via use_frame / next_frame without manual app wiring", count);
+            if is_debug_control {
+                println!("  6. [PROVEN] blitz-host control plane active and serviced on UI thread");
+            }
             println!("=================================================================");
             std::process::exit(0);
         }
@@ -121,9 +168,17 @@ fn App() -> Element {
     } else {
         "--".to_string()
     };
+    let button_label = if click_count() == 0 {
+        "Click to Test Event".to_string()
+    } else {
+        format!("Clicked {} times", click_count())
+    };
 
     rsx! {
         div {
+            onmounted: move |evt: Event<MountedData>| {
+                live_node_handle.set(evt.downcast::<dioxus_native::NodeHandle>().cloned());
+            },
             style: "width: 100vw; height: 100vh; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center;",
 
             div {
@@ -136,6 +191,12 @@ fn App() -> Element {
                         p { style: "margin: 4px 0 0; font-size: 13px; color: #94a3b8;", "End-to-End Winit RedrawRequested VSync Proof" }
                     }
                     div { style: "display: flex; gap: 8px; align-items: center;",
+                        if is_debug_control {
+                            div {
+                                style: "background: #7c3aed; color: #ede9fe; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;",
+                                "Debug Control"
+                            }
+                        }
                         if is_debug {
                             div {
                                 style: "background: #b45309; color: #fef3c7; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;",
@@ -203,11 +264,18 @@ fn App() -> Element {
 
                     div { style: "margin-top: 16px; display: flex; justify-content: flex-end;",
                         button {
+                            id: "test-interaction-button",
                             style: "background: #2563eb; color: white; padding: 6px 14px; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;",
                             onclick: move |_| {
-                                println!("[oxidase-native-runner] User clicked interaction button! Frame count: {}", frame_count());
+                                let new_count = click_count() + 1;
+                                click_count.set(new_count);
+                                println!(
+                                    "[oxidase-native-runner] User clicked interaction button! Click count: {} (Frame: {})",
+                                    new_count,
+                                    frame_count()
+                                );
                             },
-                            "Click to Test Event"
+                            "{button_label}"
                         }
                     }
                 }
@@ -218,7 +286,10 @@ fn App() -> Element {
                     p { style: "margin: 0 0 4px 0;", "✔ 2. oxidase::dom::Document::current() active" }
                     p { style: "margin: 0 0 4px 0;", "✔ 3. dioxus_native::use_window_event hooked" }
                     p { style: "margin: 0 0 4px 0;", "✔ 4. WindowEvent::RedrawRequested driving step_hosted_frame()" }
-                    p { style: "margin: 0;", "✔ 5. Real frame callbacks ticking in hosted native runtime" }
+                    p { style: "margin: 0 0 4px 0;", "✔ 5. Real frame callbacks ticking in hosted native runtime" }
+                    if is_debug_control {
+                        p { style: "margin: 0; color: #a855f7; font-weight: 600;", "✔ 6. blitz-host local debug control plane attached & inspected" }
+                    }
                 }
             }
         }

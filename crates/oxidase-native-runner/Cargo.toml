@@ -13,10 +13,20 @@ blitz-dom = { version = "0.3.0-beta.2", default-features = false }
 dioxus = { version = "0.7.10", default-features = false, features = ["launch", "devtools", "document", "hooks", "signals", "macro", "html"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+blitz-host = { path = "../../../blitz-host/crates/blitz-host" }
+keyboard-types = "0.7"
+
+[patch."https://github.com/techton7/blitz.git"]
+dioxus-native = { path = "../../../../blitz/packages/dioxus-native" }
+dioxus-native-dom = { path = "../../../../blitz/packages/dioxus-native-dom" }
+blitz-shell = { path = "../../../../blitz/packages/blitz-shell" }
+blitz-dom = { path = "../../../../blitz/packages/blitz-dom" }
+blitz-traits = { path = "../../../../blitz/packages/blitz-traits" }
+blitz-paint = { path = "../../../../blitz/packages/blitz-paint" }
 
 [patch.crates-io]
-blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.1" }
-blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.1" }
-blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.1" }
-blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.1" }
+blitz-shell = { path = "../../../../blitz/packages/blitz-shell" }
+blitz-dom = { path = "../../../../blitz/packages/blitz-dom" }
+blitz-traits = { path = "../../../../blitz/packages/blitz-traits" }
+blitz-paint = { path = "../../../../blitz/packages/blitz-paint" }
 
