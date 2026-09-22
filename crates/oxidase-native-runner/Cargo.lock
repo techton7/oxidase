@@ -486,6 +486,9 @@ dependencies = [
  "blitz-host-bridge",
  "blitz-host-protocol",
  "blitz-host-transport",
+ "dioxus",
+ "dioxus-native",
+ "keyboard-types 0.7.0",
  "serde",
  "serde_json",
 ]
@@ -3516,7 +3519,6 @@ dependencies = [
  "blitz-host",
  "dioxus",
  "dioxus-native",
- "keyboard-types 0.7.0",
  "oxidase",
  "tracing",
  "tracing-subscriber",

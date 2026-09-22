@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 
-use blitz_host::HostControl;
+use blitz_host::prelude::*;
 use dioxus::prelude::*;
 use oxidase::prelude::*;
 
@@ -32,7 +32,7 @@ fn is_debug_profile() -> bool {
 
 #[oxidase::main]
 fn main() {
-    let is_debug_control = HostControl::init_global_if_requested(
+    let is_debug_control = blitz_host::init_if_debug(
         "oxidase-native-runner",
         env!("CARGO_PKG_VERSION"),
     );
@@ -68,7 +68,6 @@ fn main() {
 fn App() -> Element {
     let is_interactive = use_hook(is_interactive_mode);
     let is_debug_control = use_hook(HostControl::is_global_active);
-    let mut live_node_handle = use_signal(|| None::<dioxus_native::NodeHandle>);
 
     // Document context is automatically provided by #[oxidase::main] bootstrap
     let doc = Document::current().expect("Document::current() must be active via #[oxidase::main]");
@@ -99,31 +98,6 @@ fn App() -> Element {
         frame_count.set(count);
         last_dt.set(info.delta);
         total_duration.set(total_duration() + info.delta);
-
-        // Service blitz-host control requests on the UI thread holding BaseDocument
-        if is_debug_control {
-            if let Some(handle) = live_node_handle() {
-                let serviced = HostControl::service_global_frame(
-                    &handle.doc(),
-                    count,
-                    |action_req, base_doc| {
-                        HostControl::handle_action_click(action_req, base_doc, |d, nid| {
-                            dioxus_native::dispatch_synthetic_click(
-                                d,
-                                blitz_dom::NodeId::from_u64(nid),
-                                keyboard_types::Modifiers::empty(),
-                            )
-                        })
-                    },
-                );
-                if serviced > 0 {
-                    println!(
-                        "[oxidase-native-runner] [blitz-host] Serviced {} control request(s) on UI thread at frame #{}",
-                        serviced, count
-                    );
-                }
-            }
-        }
 
         if status_msg().starts_with("Starting") {
             status_msg.set(format!("Hosted Frame Loop Active (dt: {:?})", info.delta));
@@ -175,11 +149,9 @@ fn App() -> Element {
     };
 
     rsx! {
-        div {
-            onmounted: move |evt: Event<MountedData>| {
-                live_node_handle.set(evt.downcast::<dioxus_native::NodeHandle>().cloned());
-            },
-            style: "width: 100vw; height: 100vh; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center;",
+        BlitzHost {
+            div {
+                style: "width: 100vw; height: 100vh; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center;",
 
             div {
                 style: "width: 100%; max-width: 660px; background-color: #1e293b; border-radius: 16px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); border: 1px solid #334155;",
@@ -292,6 +264,7 @@ fn App() -> Element {
                     }
                 }
             }
+        }
         }
     }
 }
