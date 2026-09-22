@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/techton7/oxidase/compare/oxidase-v0.1.4...oxidase-v0.1.5) - 2026-09-22
+
+### Added
+
+- add optional `blitz-host` Cargo feature integrating native live-window debug control
+- add `HostedRootWrapper`, `init_debug_control_if_available()`, and `is_debug_control_active()` to `launch` module
+
 ## [0.1.4](https://github.com/techton7/oxidase/compare/oxidase-v0.1.3...oxidase-v0.1.4) - 2026-09-21
 
 ### Added
