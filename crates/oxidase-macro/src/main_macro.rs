@@ -102,8 +102,7 @@ fn rewrite_stmts(stmts: &mut [syn::Stmt], is_headless: bool) -> bool {
 
 pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr_str = attr.to_string();
-    let is_headless = attr_str.contains("headless")
-        || std::env::var("CARGO_PKG_NAME").as_deref() == Ok("oxidase");
+    let is_headless = attr_str.contains("headless");
 
     let mut item_fn = parse_macro_input!(item as syn::ItemFn);
     rewrite_stmts(&mut item_fn.block.stmts, is_headless);

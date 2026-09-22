@@ -34,6 +34,9 @@ blitz-shell = { version = "0.3.0-beta.2", optional = true }
 anyrender_vello = { version = "0.14.0", optional = true }
 blitz-host = { git = "https://github.com/techton7/blitz-host.git", version = "0.1.0", features = ["dioxus-native"], optional = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.1" }
+
 [features]
 default = []
 native = ["dep:blitz-dom", "dep:blitz-shell", "dep:anyrender_vello"]

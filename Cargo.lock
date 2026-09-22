@@ -3475,6 +3475,7 @@ dependencies = [
  "blitz-host",
  "blitz-shell",
  "dioxus",
+ "dioxus-native",
  "oxidase-macro",
  "serde",
  "serde_json",
