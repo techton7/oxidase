@@ -47,6 +47,50 @@ pub fn step_hosted_frame() -> std::time::Duration {
     crate::frame::step_hosted_frame()
 }
 
+/// Transparent root wrapper component injected by `#[oxidase::main]`.
+///
+/// When the `blitz-host` feature is enabled on `oxidase`, wraps `children` in
+/// `<blitz_host::BlitzHost>` to automatically capture the live window's `NodeHandle`,
+/// service control requests on `WindowEvent::RedrawRequested`, and handle synthetic actions.
+///
+/// When `blitz-host` is not enabled, renders `children` with zero overhead.
+#[component]
+pub fn HostedRootWrapper(children: Element) -> Element {
+    #[cfg(feature = "blitz-host")]
+    {
+        rsx! {
+            ::blitz_host::BlitzHost {
+                {children}
+            }
+        }
+    }
+    #[cfg(not(feature = "blitz-host"))]
+    {
+        children
+    }
+}
+
+/// Automatically initializes `blitz-host` debug control if the `blitz-host` feature
+/// is enabled on `oxidase` and `--debug-control` / `BLITZ_DEBUG_CONTROL=1` was requested.
+pub fn init_debug_control_if_available() {
+    #[cfg(feature = "blitz-host")]
+    {
+        ::blitz_host::init_if_debug_default();
+    }
+}
+
+/// Returns whether `blitz-host` debug control is currently active in the running process.
+pub fn is_debug_control_active() -> bool {
+    #[cfg(feature = "blitz-host")]
+    {
+        ::blitz_host::HostControl::is_global_active()
+    }
+    #[cfg(not(feature = "blitz-host"))]
+    {
+        false
+    }
+}
+
 /// Launch a Dioxus application with ambient cross-platform DOM capability.
 ///
 /// - On Web targets (`wasm32`), delegates to `dioxus::launch(app)` backed by browser RAF.

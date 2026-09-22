@@ -9,4 +9,5 @@ pub use crate::frame::{next_frame, use_frame, FrameInfo, NextFrameFuture};
 pub use crate::runtime::{get_viewport, measure_rect};
 pub use crate::use_watcher;
 pub use crate::watcher_guard::WatcherGuard;
+pub use crate::launch::is_debug_control_active;
 pub use oxidase_macro::{bind_js, main};

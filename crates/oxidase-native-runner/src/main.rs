@@ -17,7 +17,6 @@
 
 use std::time::Duration;
 
-use blitz_host::prelude::*;
 use dioxus::prelude::*;
 use oxidase::prelude::*;
 
@@ -32,10 +31,7 @@ fn is_debug_profile() -> bool {
 
 #[oxidase::main]
 fn main() {
-    let is_debug_control = blitz_host::init_if_debug(
-        "oxidase-native-runner",
-        env!("CARGO_PKG_VERSION"),
-    );
+    let is_debug_control = is_debug_control_active();
 
     println!("=================================================================");
     println!("[oxidase-native-runner] Launching Native Hosted Frame Test Runner");
@@ -67,7 +63,7 @@ fn main() {
 #[component]
 fn App() -> Element {
     let is_interactive = use_hook(is_interactive_mode);
-    let is_debug_control = use_hook(HostControl::is_global_active);
+    let is_debug_control = use_hook(is_debug_control_active);
 
     // Document context is automatically provided by #[oxidase::main] bootstrap
     let doc = Document::current().expect("Document::current() must be active via #[oxidase::main]");
@@ -149,9 +145,8 @@ fn App() -> Element {
     };
 
     rsx! {
-        BlitzHost {
-            div {
-                style: "width: 100vw; height: 100vh; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center;",
+        div {
+            style: "width: 100vw; height: 100vh; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center;",
 
             div {
                 style: "width: 100%; max-width: 660px; background-color: #1e293b; border-radius: 16px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); border: 1px solid #334155;",
@@ -264,7 +259,6 @@ fn App() -> Element {
                     }
                 }
             }
-        }
         }
     }
 }

@@ -3487,6 +3487,7 @@ version = "0.1.4"
 dependencies = [
  "anyrender_vello",
  "blitz-dom",
+ "blitz-host",
  "blitz-shell",
  "dioxus",
  "oxidase-macro",
@@ -3516,7 +3517,6 @@ name = "oxidase-native-runner"
 version = "0.1.0"
 dependencies = [
  "blitz-dom",
- "blitz-host",
  "dioxus",
  "dioxus-native",
  "oxidase",

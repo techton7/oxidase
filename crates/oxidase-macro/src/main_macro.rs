@@ -63,12 +63,15 @@ fn rewrite_launch_expr(expr: &mut syn::Expr, is_headless: bool) -> bool {
                                         }
                                     });
 
-                                    // 4. Render consumer App
+                                    // 4. Render consumer App inside HostedRootWrapper
                                     ::dioxus::prelude::rsx! {
-                                        #app {}
+                                        ::oxidase::launch::HostedRootWrapper {
+                                            #app {}
+                                        }
                                     }
                                 }
 
+                                ::oxidase::launch::init_debug_control_if_available();
                                 ::dioxus_native::launch(__OxidaseNativeHostedRoot);
                             }
                         });

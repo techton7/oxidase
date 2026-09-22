@@ -9,6 +9,9 @@ pub use serde;
 pub use serde_json;
 pub use tracing;
 
+#[cfg(feature = "blitz-host")]
+pub use blitz_host;
+
 pub mod watcher_guard;
 pub use watcher_guard::WatcherGuard;
 
