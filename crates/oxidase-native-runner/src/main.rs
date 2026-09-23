@@ -88,6 +88,8 @@ fn App() -> Element {
     let mut last_dt = use_signal(|| Duration::ZERO);
     let mut status_msg = use_signal(|| "Starting VSync Frame Loop...".to_string());
     let mut click_count = use_signal(|| 0u32);
+    let mut input_text = use_signal(|| String::new());
+    let mut is_focused = use_signal(|| false);
 
     // High-Level DX 1: next_frame().await in async block
     use_future(move || async move {
@@ -236,6 +238,49 @@ fn App() -> Element {
                         div {
                             style: "margin-top: 14px; background: #064e3b; border: 1px solid #065f46; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #a7f3d0; line-height: 1.4;",
                             "⚡ Optimized Release Profile: Compiler optimizations enabled; running at full native display refresh (60-120 FPS)."
+                        }
+                    }
+
+                    // Text Input & Focus workflow verification
+                    div {
+                        style: "margin-top: 16px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 8px;",
+                        div {
+                            style: "display: flex; align-items: center; justify-content: space-between;",
+                            span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Input Workflow Test:" }
+                            if is_focused() {
+                                span {
+                                    id: "focus-indicator",
+                                    style: "background: #065f46; color: #6ee7b7; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;",
+                                    "FOCUSED"
+                                }
+                            }
+                        }
+                        div {
+                            style: "display: flex; gap: 10px; align-items: center;",
+                            input {
+                                id: "test-input",
+                                style: "flex: 1; background: #0f172a; color: #f8fafc; border: 1px solid #475569; padding: 6px 12px; border-radius: 6px; font-size: 12px;",
+                                placeholder: "Type here...",
+                                value: "{input_text}",
+                                onfocus: move |_| {
+                                    is_focused.set(true);
+                                    println!("[oxidase-native-runner] Input focused!");
+                                },
+                                onblur: move |_| {
+                                    is_focused.set(false);
+                                    println!("[oxidase-native-runner] Input blurred!");
+                                },
+                                oninput: move |evt: FormEvent| {
+                                    let val = evt.value();
+                                    println!("[oxidase-native-runner] Input value changed: {}", val);
+                                    input_text.set(val);
+                                },
+                            }
+                        }
+                        p {
+                            id: "typed-text",
+                            style: "margin: 0; font-size: 12px; color: #38bdf8; font-family: monospace;",
+                            "Typed: {input_text}"
                         }
                     }
 

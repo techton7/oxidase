@@ -47,6 +47,8 @@ fn App() -> Element {
     let mut last_dt = use_signal(|| Duration::ZERO);
     let mut status_msg = use_signal(|| "Starting Frame Loop...".to_string());
     let mut click_count = use_signal(|| 0u32);
+    let mut input_text = use_signal(|| String::new());
+    let mut is_focused = use_signal(|| false);
 
     // 3. High-level DX: next_frame().await
     use_future(move || async move {
@@ -169,8 +171,51 @@ fn App() -> Element {
                         div { style: "color: #f1f5f9; font-family: monospace;", "{doc_info}" }
                     }
 
+                    // Text Input & Focus workflow verification
+                    div {
+                        style: "margin-top: 20px; padding-top: 16px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 8px;",
+                        div {
+                            style: "display: flex; align-items: center; justify-content: space-between;",
+                            span { style: "font-size: 13px; font-weight: 600; color: #94a3b8;", "Live Input Workflow Test:" }
+                            if is_focused() {
+                                span {
+                                    id: "focus-indicator",
+                                    style: "background: #065f46; color: #6ee7b7; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;",
+                                    "FOCUSED"
+                                }
+                            }
+                        }
+                        div {
+                            style: "display: flex; gap: 10px; align-items: center;",
+                            input {
+                                id: "test-input",
+                                style: "flex: 1; background: #0f172a; color: #f8fafc; border: 1px solid #475569; padding: 8px 12px; border-radius: 6px; font-size: 13px;",
+                                placeholder: "Type here...",
+                                value: "{input_text}",
+                                onfocus: move |_| {
+                                    is_focused.set(true);
+                                    println!("[cross_host] Input focused!");
+                                },
+                                onblur: move |_| {
+                                    is_focused.set(false);
+                                    println!("[cross_host] Input blurred!");
+                                },
+                                oninput: move |evt: FormEvent| {
+                                    let val = evt.value();
+                                    println!("[cross_host] Input value changed: {}", val);
+                                    input_text.set(val);
+                                },
+                            }
+                        }
+                        p {
+                            id: "typed-text",
+                            style: "margin: 0; font-size: 13px; color: #38bdf8; font-family: monospace;",
+                            "Typed: {input_text}"
+                        }
+                    }
+
                     // Interaction button for click/event verification
-                    div { style: "margin-top: 20px; display: flex; justify-content: flex-end;",
+                    div { style: "margin-top: 16px; display: flex; justify-content: flex-end;",
                         button {
                             id: "test-interaction-button",
                             style: "background: #2563eb; color: white; padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;",
