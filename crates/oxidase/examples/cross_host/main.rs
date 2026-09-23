@@ -3,7 +3,7 @@
 //! Demonstrates a single, unified Dioxus application code path running identically across:
 //! - **Web (`wasm32-unknown-unknown`)**: Driven by browser `requestAnimationFrame` and `web-sys::Document`.
 //! - **Native Desktop (macOS/Linux/Windows)**: Driven by Blitz 0.3.0 / Vello GPU VSync and native `BaseDocument`.
-//! - **Optional Native Debug Control**: Supports `--debug-control` via the `blitz-host` feature with zero app-level boilerplate.
+//! - **Native Debug Control**: When built with the `blitz-host` feature, debug control is automatically available with zero app-level boilerplate.
 //!
 //! ## Key `oxidase` Capabilities Demonstrated:
 //! 1. `#[oxidase::main]` unified entrypoint macro.

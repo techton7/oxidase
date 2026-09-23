@@ -1,6 +1,15 @@
 //! # oxidase-native-runner
 //!
-//! Internal `publish = false` test harness and dogfooding runner for `oxidase`.
+//! Internal `publish = false` test harness and automated verification runner for `oxidase`.
+//!
+//! **Architectural Role**:
+//! This binary is an **internal monorepo test harness**, NOT the canonical consumer sample.
+//! It intentionally consumes in-tree `oxidase` via local paths to enable zero-latency testing
+//! of runtime engine modifications during active development.
+//!
+//! For the canonical, standalone cross-host consumer example, see:
+//! `crates/oxidase/examples/cross_host/main.rs`.
+
 //!
 //! Proves real hosted-native frame driving via:
 //! - `techton7/blitz` (`dioxus-native` with Blitz 0.3.0-beta.2 + Vello GPU backend)
@@ -47,8 +56,9 @@ fn main() {
         "Auto-Close Proof (20 frames)"
     });
     if is_debug_control {
-        println!("  • Debug Control : ACTIVE (--debug-control)");
+        println!("  • Debug Control : ACTIVE (blitz-host feature enabled)");
     }
+
     if is_debug_profile() {
         println!("  • Build Profile : Debug (Unoptimized, ~20 FPS expected)");
         println!("    ℹ️  Tip: Run with `--release` for full 60-120 FPS native VSync!");

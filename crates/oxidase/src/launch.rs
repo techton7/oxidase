@@ -71,13 +71,14 @@ pub fn HostedRootWrapper(children: Element) -> Element {
 }
 
 /// Automatically initializes `blitz-host` debug control if the `blitz-host` feature
-/// is enabled on `oxidase` and `--debug-control` / `BLITZ_DEBUG_CONTROL=1` was requested.
+/// is enabled on `oxidase`.
 pub fn init_debug_control_if_available() {
     #[cfg(feature = "blitz-host")]
     {
-        ::blitz_host::init_if_debug_default();
+        ::blitz_host::init_default();
     }
 }
+
 
 /// Returns whether `blitz-host` debug control is currently active in the running process.
 pub fn is_debug_control_active() -> bool {

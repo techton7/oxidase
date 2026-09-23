@@ -6,6 +6,14 @@ license = "MIT OR Apache-2.0"
 description = "Internal native test runner for oxidase"
 publish = false
 
+# NOTE: oxidase-native-runner is an internal test harness (`publish = false`).
+# It intentionally consumes in-tree `oxidase` via `path = "../oxidase"` and local
+# monorepo workspace patches. This enables immediate, zero-latency testing of engine
+# changes without requiring circular git-tag publishing loops.
+#
+# For the canonical, standalone cross-host consumer example, see:
+# `crates/oxidase/examples/cross_host/main.rs`.
+
 [dependencies]
 oxidase = { version = "0.1.5", path = "../oxidase", features = ["native", "blitz-host"] }
 dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.1" }
