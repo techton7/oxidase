@@ -90,6 +90,9 @@ fn App() -> Element {
     let mut click_count = use_signal(|| 0u32);
     let mut input_text = use_signal(|| String::new());
     let mut is_focused = use_signal(|| false);
+    let mut is_hovered = use_signal(|| false);
+    let mut is_pressed = use_signal(|| false);
+    let mut scroll_pos = use_signal(|| 0.0f64);
 
     // High-Level DX 1: next_frame().await in async block
     use_future(move || async move {
@@ -298,6 +301,88 @@ fn App() -> Element {
                                 );
                             },
                             "{button_label}"
+                        }
+                    }
+
+                    // Mouse / Pointer Test Section
+                    div {
+                        style: "margin-top: 16px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 8px;",
+                        div {
+                            style: "display: flex; align-items: center; justify-content: space-between;",
+                            span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Mouse / Pointer Test:" }
+                            div { style: "display: flex; gap: 6px;",
+                                span {
+                                    id: "hover-status",
+                                    style: if is_hovered() {
+                                        "background: #0284c7; color: #e0f2fe; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                                    } else {
+                                        "background: #334155; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                                    },
+                                    if is_hovered() { "HOVERED" } else { "NOT_HOVERED" }
+                                }
+                                span {
+                                    id: "pressed-status",
+                                    style: if is_pressed() {
+                                        "background: #b91c1c; color: #fef2f2; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                                    } else {
+                                        "background: #334155; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                                    },
+                                    if is_pressed() { "PRESSED" } else { "RELEASED" }
+                                }
+                            }
+                        }
+                        div {
+                            id: "mouse-test-card",
+                            style: "background: #0f172a; border: 1px solid #475569; padding: 10px; border-radius: 6px; text-align: center; cursor: pointer;",
+                            onmouseenter: move |_| {
+                                is_hovered.set(true);
+                                println!("[oxidase-native-runner] Mouse entered card");
+                            },
+                            onmouseleave: move |_| {
+                                is_hovered.set(false);
+                                println!("[oxidase-native-runner] Mouse left card");
+                            },
+                            onpointerdown: move |_| {
+                                is_pressed.set(true);
+                                println!("[oxidase-native-runner] Pointer down on card");
+                            },
+                            onpointerup: move |_| {
+                                is_pressed.set(false);
+                                println!("[oxidase-native-runner] Pointer up on card");
+                            },
+                            span { style: "font-size: 12px; color: #e2e8f0;", "Pointer Target (Move / Down / Up / Drag)" }
+                        }
+                    }
+
+                    // Wheel / Scroll Test Section
+                    div {
+                        style: "margin-top: 14px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 6px;",
+                        div {
+                            style: "display: flex; align-items: center; justify-content: space-between;",
+                            span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Wheel / Scroll Test:" }
+                            span {
+                                id: "scroll-status",
+                                style: "font-size: 12px; color: #38bdf8; font-family: monospace;",
+                                "Scroll Y: {scroll_pos():.0}"
+                            }
+                        }
+                        div {
+                            id: "test-scroll-container",
+                            style: "height: 80px; overflow-y: scroll; background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px;",
+                            onwheel: move |evt: WheelEvent| {
+                                if let dioxus::html::geometry::WheelDelta::Pixels(v) = evt.delta() {
+                                    let new_pos = (scroll_pos() + v.y).max(0.0);
+                                    println!("[oxidase-native-runner] Wheel scrolled delta_y={} -> new_pos={}", v.y, new_pos);
+                                    scroll_pos.set(new_pos);
+                                } else {
+                                    scroll_pos.set(scroll_pos() + 45.0);
+                                }
+                            },
+                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 1" }
+                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 2" }
+                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 3" }
+                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 4" }
+                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 5" }
                         }
                     }
                 }
