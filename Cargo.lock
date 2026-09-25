@@ -488,7 +488,6 @@ dependencies = [
 name = "blitz-host"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "blitz-dom",
  "blitz-host-bridge",
  "blitz-host-protocol",
@@ -506,7 +505,6 @@ version = "0.1.0"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
- "base64 0.22.1",
  "blitz-dom",
  "blitz-host-protocol",
  "blitz-host-transport",
@@ -527,7 +525,6 @@ dependencies = [
 name = "blitz-host-transport"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "blitz-host-protocol",
  "libc",
  "serde",

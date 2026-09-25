@@ -32,7 +32,7 @@ fn rewrite_launch_expr(expr: &mut syn::Expr, is_headless: bool) -> bool {
                 let app_expr = call.args.first().cloned();
                 if let Some(app) = app_expr {
                     if is_headless {
-                        *expr = syn::parse_quote!(::oxidase::launch(#app));
+                        *expr = syn::parse_quote!(oxidase::launch(#app));
                     } else {
                         *expr = syn::parse_quote!({
                             #[cfg(target_arch = "wasm32")]

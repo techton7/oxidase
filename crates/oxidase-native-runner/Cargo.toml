@@ -42,3 +42,8 @@ blitz-dom = { path = "../../../../blitz/packages/blitz-dom" }
 blitz-traits = { path = "../../../../blitz/packages/blitz-traits" }
 blitz-paint = { path = "../../../../blitz/packages/blitz-paint" }
 
+# Keep oxidase-native-runner in debug mode (opt-level = 0, full debuginfo)
+# while compiling all external dependencies (vello, wgpu, stylo, blitz) with opt-level = 3
+[profile.dev.package."*"]
+opt-level = 3
+

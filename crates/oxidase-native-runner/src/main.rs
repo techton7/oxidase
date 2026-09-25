@@ -105,12 +105,13 @@ fn App() -> Element {
 
     // High-Level DX 2: use_frame declarative animation hook
     use_frame(move |info| {
-        let count = frame_count() + 1;
+        let count = *frame_count.peek() + 1;
         frame_count.set(count);
         last_dt.set(info.delta);
-        total_duration.set(total_duration() + info.delta);
+        let cur_total = *total_duration.peek();
+        total_duration.set(cur_total + info.delta);
 
-        if status_msg().starts_with("Starting") {
+        if status_msg.peek().starts_with("Starting") {
             status_msg.set(format!("Hosted Frame Loop Active (dt: {:?})", info.delta));
             println!("[oxidase-native-runner] [Criterion 3 & 4 PASS] Hosted frame loop ticking automatically via #[oxidase::main] / VSync (initial dt: {:?})", info.delta);
         }
@@ -120,7 +121,7 @@ fn App() -> Element {
                 "[oxidase-native-runner] [Criterion 5 PASS] Frame #{:02}: dt = {:>6.2?} | Total = {:>7.2?}",
                 count,
                 info.delta,
-                total_duration()
+                total_duration.peek()
             );
         }
 
@@ -143,21 +144,6 @@ fn App() -> Element {
     });
 
     let is_debug = cfg!(debug_assertions);
-    let instant_fps = if last_dt().as_secs_f64() > 0.001 {
-        format!("{:.1} FPS", 1.0 / last_dt().as_secs_f64())
-    } else {
-        "--".to_string()
-    };
-    let avg_fps = if total_duration().as_secs_f64() > 0.05 {
-        format!("{:.1} FPS", frame_count() as f64 / total_duration().as_secs_f64())
-    } else {
-        "--".to_string()
-    };
-    let button_label = if click_count() == 0 {
-        "Click to Test Event".to_string()
-    } else {
-        format!("Clicked {} times", click_count())
-    };
 
     rsx! {
         div {
@@ -197,194 +183,24 @@ fn App() -> Element {
                     }
                 }
 
-                // Status card
-                div {
-                    style: "background: #0f172a; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #1e293b;",
+                // 1. High-frequency VSync metrics card (isolated component!)
+                VsyncMetricsCard {
+                    status_msg,
+                    frame_count,
+                    last_dt,
+                    total_duration,
+                    doc_id,
+                    is_debug,
+                }
 
-                    div { style: "display: flex; align-items: center; gap: 10px; margin-bottom: 12px;",
-                        div { style: "width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981;" }
-                        span { style: "font-size: 16px; font-weight: 600; color: #f1f5f9;", "{status_msg}" }
-                    }
-
-                    // Live visual VSync pulse indicator
-                    div {
-                        style: "width: 100%; height: 6px; background: #334155; border-radius: 3px; overflow: hidden; margin-bottom: 16px;",
-                        div {
-                            style: "height: 100%; width: {((frame_count() * 3) % 100)}%; background: #38bdf8; border-radius: 3px;",
-                        }
-                    }
-
-                    div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;",
-                        div { style: "color: #94a3b8;", "Frames Executed:" }
-                        div { style: "color: #38bdf8; font-weight: 700; font-family: monospace;", "{frame_count}" }
-
-                        div { style: "color: #94a3b8;", "Frame Rate (Instant / Avg):" }
-                        div { style: "color: #38bdf8; font-weight: 700; font-family: monospace;", "{instant_fps} (Avg: {avg_fps})" }
-
-                        div { style: "color: #94a3b8;", "Last Frame Delta:" }
-                        div { style: "color: #f1f5f9; font-family: monospace;", "{last_dt():?}" }
-
-                        div { style: "color: #94a3b8;", "Total Dispatched Time:" }
-                        div { style: "color: #f1f5f9; font-family: monospace;", "{total_duration():?}" }
-
-                        div { style: "color: #94a3b8;", "Document ID:" }
-                        div { style: "color: #f1f5f9; font-family: monospace;", "{doc_id}" }
-                    }
-
-                    // Performance profile advisory notice
-                    if is_debug {
-                        div {
-                            style: "margin-top: 14px; background: #451a03; border: 1px solid #78350f; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #fde68a; line-height: 1.4;",
-                            "💡 Profile Note: Running in Debug mode (~20 FPS due to unoptimized Stylo CSS & Vello GPU shader compilation). Run with `--release` for full 60-120 FPS native VSync performance."
-                        }
-                    } else {
-                        div {
-                            style: "margin-top: 14px; background: #064e3b; border: 1px solid #065f46; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #a7f3d0; line-height: 1.4;",
-                            "⚡ Optimized Release Profile: Compiler optimizations enabled; running at full native display refresh (60-120 FPS)."
-                        }
-                    }
-
-                    // Text Input & Focus workflow verification
-                    div {
-                        style: "margin-top: 16px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 8px;",
-                        div {
-                            style: "display: flex; align-items: center; justify-content: space-between;",
-                            span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Input Workflow Test:" }
-                            if is_focused() {
-                                span {
-                                    id: "focus-indicator",
-                                    style: "background: #065f46; color: #6ee7b7; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;",
-                                    "FOCUSED"
-                                }
-                            }
-                        }
-                        div {
-                            style: "display: flex; gap: 10px; align-items: center;",
-                            input {
-                                id: "test-input",
-                                style: "flex: 1; background: #0f172a; color: #f8fafc; border: 1px solid #475569; padding: 6px 12px; border-radius: 6px; font-size: 12px;",
-                                placeholder: "Type here...",
-                                value: "{input_text}",
-                                onfocus: move |_| {
-                                    is_focused.set(true);
-                                    println!("[oxidase-native-runner] Input focused!");
-                                },
-                                onblur: move |_| {
-                                    is_focused.set(false);
-                                    println!("[oxidase-native-runner] Input blurred!");
-                                },
-                                oninput: move |evt: FormEvent| {
-                                    let val = evt.value();
-                                    println!("[oxidase-native-runner] Input value changed: {}", val);
-                                    input_text.set(val);
-                                },
-                            }
-                        }
-                        p {
-                            id: "typed-text",
-                            style: "margin: 0; font-size: 12px; color: #38bdf8; font-family: monospace;",
-                            "Typed: {input_text}"
-                        }
-                    }
-
-                    div { style: "margin-top: 16px; display: flex; justify-content: flex-end;",
-                        button {
-                            id: "test-interaction-button",
-                            style: "background: #2563eb; color: white; padding: 6px 14px; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;",
-                            onclick: move |_| {
-                                let new_count = click_count() + 1;
-                                click_count.set(new_count);
-                                println!(
-                                    "[oxidase-native-runner] User clicked interaction button! Click count: {} (Frame: {})",
-                                    new_count,
-                                    frame_count()
-                                );
-                            },
-                            "{button_label}"
-                        }
-                    }
-
-                    // Mouse / Pointer Test Section
-                    div {
-                        style: "margin-top: 16px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 8px;",
-                        div {
-                            style: "display: flex; align-items: center; justify-content: space-between;",
-                            span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Mouse / Pointer Test:" }
-                            div { style: "display: flex; gap: 6px;",
-                                span {
-                                    id: "hover-status",
-                                    style: if is_hovered() {
-                                        "background: #0284c7; color: #e0f2fe; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
-                                    } else {
-                                        "background: #334155; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
-                                    },
-                                    if is_hovered() { "HOVERED" } else { "NOT_HOVERED" }
-                                }
-                                span {
-                                    id: "pressed-status",
-                                    style: if is_pressed() {
-                                        "background: #b91c1c; color: #fef2f2; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
-                                    } else {
-                                        "background: #334155; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
-                                    },
-                                    if is_pressed() { "PRESSED" } else { "RELEASED" }
-                                }
-                            }
-                        }
-                        div {
-                            id: "mouse-test-card",
-                            style: "background: #0f172a; border: 1px solid #475569; padding: 10px; border-radius: 6px; text-align: center; cursor: pointer;",
-                            onmouseenter: move |_| {
-                                is_hovered.set(true);
-                                println!("[oxidase-native-runner] Mouse entered card");
-                            },
-                            onmouseleave: move |_| {
-                                is_hovered.set(false);
-                                println!("[oxidase-native-runner] Mouse left card");
-                            },
-                            onpointerdown: move |_| {
-                                is_pressed.set(true);
-                                println!("[oxidase-native-runner] Pointer down on card");
-                            },
-                            onpointerup: move |_| {
-                                is_pressed.set(false);
-                                println!("[oxidase-native-runner] Pointer up on card");
-                            },
-                            span { style: "font-size: 12px; color: #e2e8f0;", "Pointer Target (Move / Down / Up / Drag)" }
-                        }
-                    }
-
-                    // Wheel / Scroll Test Section
-                    div {
-                        style: "margin-top: 14px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 6px;",
-                        div {
-                            style: "display: flex; align-items: center; justify-content: space-between;",
-                            span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Wheel / Scroll Test:" }
-                            span {
-                                id: "scroll-status",
-                                style: "font-size: 12px; color: #38bdf8; font-family: monospace;",
-                                "Scroll Y: {scroll_pos():.0}"
-                            }
-                        }
-                        div {
-                            id: "test-scroll-container",
-                            style: "height: 80px; overflow-y: scroll; background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px;",
-                            onwheel: move |evt: WheelEvent| {
-                                if let dioxus::html::geometry::WheelDelta::Pixels(v) = evt.delta() {
-                                    let new_pos = (scroll_pos() + v.y).max(0.0);
-                                    println!("[oxidase-native-runner] Wheel scrolled delta_y={} -> new_pos={}", v.y, new_pos);
-                                    scroll_pos.set(new_pos);
-                                } else {
-                                    scroll_pos.set(scroll_pos() + 45.0);
-                                }
-                            },
-                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 1" }
-                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 2" }
-                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 3" }
-                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 4" }
-                            div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 5" }
-                        }
-                    }
+                // 2. Interactive test workflow card (isolated component, only updates on user interaction)
+                InteractiveTestCard {
+                    click_count,
+                    input_text,
+                    is_focused,
+                    is_hovered,
+                    is_pressed,
+                    scroll_pos,
                 }
 
                 // Footer proof checklist
@@ -397,6 +213,243 @@ fn App() -> Element {
                     if is_debug_control {
                         p { style: "margin: 0; color: #a855f7; font-weight: 600;", "✔ 6. blitz-host local debug control plane attached & inspected" }
                     }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn VsyncMetricsCard(
+    status_msg: Signal<String>,
+    frame_count: Signal<u64>,
+    last_dt: Signal<Duration>,
+    total_duration: Signal<Duration>,
+    doc_id: usize,
+    is_debug: bool,
+) -> Element {
+    let dt_val = last_dt();
+    let duration_val = total_duration();
+    let count_val = frame_count();
+
+    let instant_fps = if dt_val.as_secs_f64() > 0.001 {
+        format!("{:.1} FPS", 1.0 / dt_val.as_secs_f64())
+    } else {
+        "--".to_string()
+    };
+    let avg_fps = if duration_val.as_secs_f64() > 0.05 {
+        format!("{:.1} FPS", count_val as f64 / duration_val.as_secs_f64())
+    } else {
+        "--".to_string()
+    };
+
+    rsx! {
+        div {
+            style: "background: #0f172a; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #1e293b;",
+
+            div { style: "display: flex; align-items: center; gap: 10px; margin-bottom: 12px;",
+                div { style: "width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981;" }
+                span { style: "font-size: 16px; font-weight: 600; color: #f1f5f9;", "{status_msg}" }
+            }
+
+            // Live visual VSync pulse indicator
+            div {
+                style: "width: 100%; height: 6px; background: #334155; border-radius: 3px; overflow: hidden; margin-bottom: 16px;",
+                div {
+                    style: "height: 100%; width: {((count_val * 3) % 100)}%; background: #38bdf8; border-radius: 3px;",
+                }
+            }
+
+            div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;",
+                div { style: "color: #94a3b8;", "Frames Executed:" }
+                div { style: "color: #38bdf8; font-weight: 700; font-family: monospace;", "{count_val}" }
+
+                div { style: "color: #94a3b8;", "Frame Rate (Instant / Avg):" }
+                div { style: "color: #38bdf8; font-weight: 700; font-family: monospace;", "{instant_fps} (Avg: {avg_fps})" }
+
+                div { style: "color: #94a3b8;", "Last Frame Delta:" }
+                div { style: "color: #f1f5f9; font-family: monospace;", "{dt_val:?}" }
+
+                div { style: "color: #94a3b8;", "Total Dispatched Time:" }
+                div { style: "color: #f1f5f9; font-family: monospace;", "{duration_val:?}" }
+
+                div { style: "color: #94a3b8;", "Document ID:" }
+                div { style: "color: #f1f5f9; font-family: monospace;", "{doc_id}" }
+            }
+
+            // Performance profile advisory notice
+            if is_debug {
+                div {
+                    style: "margin-top: 14px; background: #451a03; border: 1px solid #78350f; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #fde68a; line-height: 1.4;",
+                    "💡 Profile Note: Running in Debug mode (~20 FPS due to unoptimized Stylo CSS & Vello GPU shader compilation). Run with `--release` for full 60-120 FPS native VSync performance."
+                }
+            } else {
+                div {
+                    style: "margin-top: 14px; background: #064e3b; border: 1px solid #065f46; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #a7f3d0; line-height: 1.4;",
+                    "⚡ Optimized Release Profile: Compiler optimizations enabled; running at full native display refresh (60-120 FPS)."
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn InteractiveTestCard(
+    click_count: Signal<u32>,
+    input_text: Signal<String>,
+    is_focused: Signal<bool>,
+    is_hovered: Signal<bool>,
+    is_pressed: Signal<bool>,
+    scroll_pos: Signal<f64>,
+) -> Element {
+    let button_label = if click_count() == 0 {
+        "Click to Test Event".to_string()
+    } else {
+        format!("Clicked {} times", click_count())
+    };
+
+    rsx! {
+        div {
+            style: "background: #0f172a; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #1e293b;",
+
+            // Text Input & Focus workflow verification
+            div {
+                style: "display: flex; flex-direction: column; gap: 8px;",
+                div {
+                    style: "display: flex; align-items: center; justify-content: space-between;",
+                    span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Input Workflow Test:" }
+                    if is_focused() {
+                        span {
+                            id: "focus-indicator",
+                            style: "background: #065f46; color: #6ee7b7; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;",
+                            "FOCUSED"
+                        }
+                    }
+                }
+                div {
+                    style: "display: flex; gap: 10px; align-items: center;",
+                    input {
+                        id: "test-input",
+                        style: "flex: 1; background: #0f172a; color: #f8fafc; border: 1px solid #475569; padding: 6px 12px; border-radius: 6px; font-size: 12px;",
+                        placeholder: "Type here...",
+                        value: "{input_text}",
+                        onfocus: move |_| {
+                            is_focused.set(true);
+                            println!("[oxidase-native-runner] Input focused!");
+                        },
+                        onblur: move |_| {
+                            is_focused.set(false);
+                            println!("[oxidase-native-runner] Input blurred!");
+                        },
+                        oninput: move |evt: FormEvent| {
+                            let val = evt.value();
+                            println!("[oxidase-native-runner] Input value changed: {}", val);
+                            input_text.set(val);
+                        },
+                    }
+                }
+                p {
+                    id: "typed-text",
+                    style: "margin: 0; font-size: 12px; color: #38bdf8; font-family: monospace;",
+                    "Typed: {input_text}"
+                }
+            }
+
+            div { style: "margin-top: 16px; display: flex; justify-content: flex-end;",
+                button {
+                    id: "test-interaction-button",
+                    style: "background: #2563eb; color: white; padding: 6px 14px; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;",
+                    onclick: move |_| {
+                        let new_count = click_count() + 1;
+                        click_count.set(new_count);
+                        println!(
+                            "[oxidase-native-runner] User clicked interaction button! Click count: {}",
+                            new_count
+                        );
+                    },
+                    "{button_label}"
+                }
+            }
+
+            // Mouse / Pointer Test Section
+            div {
+                style: "margin-top: 16px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 8px;",
+                div {
+                    style: "display: flex; align-items: center; justify-content: space-between;",
+                    span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Mouse / Pointer Test:" }
+                    div { style: "display: flex; gap: 6px;",
+                        span {
+                            id: "hover-status",
+                            style: if is_hovered() {
+                                "background: #0284c7; color: #e0f2fe; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                            } else {
+                                "background: #334155; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                            },
+                            if is_hovered() { "HOVERED" } else { "NOT_HOVERED" }
+                        }
+                        span {
+                            id: "pressed-status",
+                            style: if is_pressed() {
+                                "background: #b91c1c; color: #fef2f2; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                            } else {
+                                "background: #334155; color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"
+                            },
+                            if is_pressed() { "PRESSED" } else { "RELEASED" }
+                        }
+                    }
+                }
+                div {
+                    id: "mouse-test-card",
+                    style: "background: #0f172a; border: 1px solid #475569; padding: 10px; border-radius: 6px; text-align: center; cursor: pointer;",
+                    onmouseenter: move |_| {
+                        is_hovered.set(true);
+                        println!("[oxidase-native-runner] Mouse entered card");
+                    },
+                    onmouseleave: move |_| {
+                        is_hovered.set(false);
+                        println!("[oxidase-native-runner] Mouse left card");
+                    },
+                    onpointerdown: move |_| {
+                        is_pressed.set(true);
+                        println!("[oxidase-native-runner] Pointer down on card");
+                    },
+                    onpointerup: move |_| {
+                        is_pressed.set(false);
+                        println!("[oxidase-native-runner] Pointer up on card");
+                    },
+                    span { style: "font-size: 12px; color: #e2e8f0;", "Pointer Target (Move / Down / Up / Drag)" }
+                }
+            }
+
+            // Wheel / Scroll Test Section
+            div {
+                style: "margin-top: 14px; padding-top: 14px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 6px;",
+                div {
+                    style: "display: flex; align-items: center; justify-content: space-between;",
+                    span { style: "font-size: 12px; font-weight: 600; color: #94a3b8;", "Live Wheel / Scroll Test:" }
+                    span {
+                        id: "scroll-status",
+                        style: "font-size: 12px; color: #38bdf8; font-family: monospace;",
+                        "Scroll Y: {scroll_pos():.0}"
+                    }
+                }
+                div {
+                    id: "test-scroll-container",
+                    style: "height: 80px; overflow-y: scroll; background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px;",
+                    onwheel: move |evt: WheelEvent| {
+                        if let dioxus::html::geometry::WheelDelta::Pixels(v) = evt.delta() {
+                            let new_pos = (scroll_pos() + v.y).max(0.0);
+                            println!("[oxidase-native-runner] Wheel scrolled delta_y={} -> new_pos={}", v.y, new_pos);
+                            scroll_pos.set(new_pos);
+                        } else {
+                            scroll_pos.set(scroll_pos() + 45.0);
+                        }
+                    },
+                    div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 1" }
+                    div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 2" }
+                    div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 3" }
+                    div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 4" }
+                    div { style: "height: 30px; color: #94a3b8; font-size: 12px;", "Scroll item 5" }
                 }
             }
         }

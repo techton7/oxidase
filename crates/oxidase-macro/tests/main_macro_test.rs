@@ -29,7 +29,7 @@ fn test_main_macro_compiles_without_launch() {
 fn test_main_macro_rewrites_dioxus_launch() {
     fn dummy_app() {}
 
-    #[main]
+    #[main(headless)]
     fn run_app() {
         let _prefix = 42;
         dioxus::launch(dummy_app);
