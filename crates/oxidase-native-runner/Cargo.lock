@@ -3494,7 +3494,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyrender_vello",
  "blitz-dom",
@@ -3512,7 +3512,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase-macro"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "heck",
  "proc-macro2",

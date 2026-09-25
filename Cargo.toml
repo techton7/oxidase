@@ -9,7 +9,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/techton7/oxidase"
@@ -27,23 +27,9 @@ proc-macro2 = "1.0"
 heck = "0.5"
 swc_core = { version = "78.0", features = ["common", "ecma_parser", "ecma_ast", "ecma_visit", "ecma_codegen", "ecma_transforms_typescript"] }
 
-[patch."https://github.com/techton7/blitz-host.git"]
-blitz-host = { path = "../blitz-host/crates/blitz-host" }
-blitz-host-protocol = { path = "../blitz-host/crates/blitz-host-protocol" }
-blitz-host-transport = { path = "../blitz-host/crates/blitz-host-transport" }
-blitz-host-bridge = { path = "../blitz-host/crates/blitz-host-bridge" }
-
-[patch."https://github.com/techton7/blitz.git"]
-dioxus-native = { path = "../../blitz/packages/dioxus-native" }
-dioxus-native-dom = { path = "../../blitz/packages/dioxus-native-dom" }
-blitz-shell = { path = "../../blitz/packages/blitz-shell" }
-blitz-dom = { path = "../../blitz/packages/blitz-dom" }
-blitz-traits = { path = "../../blitz/packages/blitz-traits" }
-blitz-paint = { path = "../../blitz/packages/blitz-paint" }
-
 [patch.crates-io]
-blitz-shell = { path = "../../blitz/packages/blitz-shell" }
-blitz-dom = { path = "../../blitz/packages/blitz-dom" }
-blitz-traits = { path = "../../blitz/packages/blitz-traits" }
-blitz-paint = { path = "../../blitz/packages/blitz-paint" }
+blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.2" }
+blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.2" }
+blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.2" }
+blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "v0.3.0-alpha.2" }
 
