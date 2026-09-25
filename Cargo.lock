@@ -488,8 +488,8 @@ dependencies = [
 
 [[package]]
 name = "blitz-host"
-version = "0.1.1"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.1#98d8fc2314b47956ff8093683a00ea8137949bea"
+version = "0.1.2"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
 dependencies = [
  "blitz-dom",
  "blitz-host-bridge",
@@ -504,8 +504,8 @@ dependencies = [
 
 [[package]]
 name = "blitz-host-bridge"
-version = "0.1.1"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.1#98d8fc2314b47956ff8093683a00ea8137949bea"
+version = "0.1.2"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -519,8 +519,8 @@ dependencies = [
 
 [[package]]
 name = "blitz-host-protocol"
-version = "0.1.1"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.1#98d8fc2314b47956ff8093683a00ea8137949bea"
+version = "0.1.2"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
 dependencies = [
  "serde",
  "serde_json",
@@ -528,8 +528,8 @@ dependencies = [
 
 [[package]]
 name = "blitz-host-transport"
-version = "0.1.1"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.1#98d8fc2314b47956ff8093683a00ea8137949bea"
+version = "0.1.2"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
 dependencies = [
  "blitz-host-protocol",
  "libc",
@@ -3493,7 +3493,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyrender_vello",
  "blitz-dom",
@@ -3512,7 +3512,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase-macro"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "heck",
  "proc-macro2",
