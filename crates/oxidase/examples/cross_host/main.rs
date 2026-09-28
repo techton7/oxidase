@@ -39,7 +39,10 @@ fn App() -> Element {
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     let doc_info = format!("Blitz Native Document (ID: {})", doc.base().borrow().id());
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "native")))]
-    let doc_info = "Host Document Mock".to_string();
+    let doc_info = {
+        let _ = &doc;
+        "Host Document Mock".to_string()
+    };
 
     // 2. Reactive animation and frame state
     let mut frame_count = use_signal(|| 0u64);

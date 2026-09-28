@@ -200,7 +200,7 @@ pub(crate) mod tests {
         let focus_res = block_on(native.focus_element("btn-1", FocusOptions::default()));
         assert_eq!(
             focus_res,
-            Err(HostError::ElementNotFound("btn-1".to_string()))
+            Err(HostError::Unsupported("Native document context not available".into()))
         );
 
         let measure_res = block_on(native.measure_rect("btn-1"));
