@@ -20,42 +20,32 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
 name = "accesskit"
-version = "0.24.1"
+version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
+checksum = "ad442f58ee04714aaa0ba0a2768c1ea1935b29507bb22ddece8cbbc76db02932"
 dependencies = [
  "uuid",
 ]
 
 [[package]]
 name = "accesskit_consumer"
-version = "0.35.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53cf47daed85312e763fbf85ceca136e0d7abc68e0a7e12abe11f48172bc3b10"
+checksum = "8a45e2bb300bea6d5f33a82c3e051c3ddc6f41c209750f68a0acbe991a284344"
 dependencies = [
  "accesskit",
- "hashbrown 0.16.1",
-]
-
-[[package]]
-name = "accesskit_consumer"
-version = "0.38.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d10a236f96f87d70732e44520046785431ef01d5bcd6b041317bfadd2f88245"
-dependencies = [
- "accesskit",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
 name = "accesskit_macos"
-version = "0.26.3"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce02dc63b43f0c9296af9ac946312a2dc8814427d7a64d2d600971dac55b6076"
+checksum = "5701624bf6a11efb6d4c8e922bf44126ed96250e5faa9a7a0468c979635839a4"
 dependencies = [
  "accesskit",
- "accesskit_consumer 0.38.0",
- "hashbrown 0.16.1",
+ "accesskit_consumer",
+ "hashbrown 0.17.1",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
@@ -63,13 +53,13 @@ dependencies = [
 
 [[package]]
 name = "accesskit_windows"
-version = "0.32.1"
+version = "0.35.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff7009f1a532e917d66970a1e80c965140c6cfbbabbdde3d64e5431e6c78e21"
+checksum = "ce63f35d6bdcf59f26b76b3379063f738e6412cef46999cc772d46aa3de35adb"
 dependencies = [
  "accesskit",
- "accesskit_consumer 0.35.0",
- "hashbrown 0.16.1",
+ "accesskit_consumer",
+ "hashbrown 0.17.1",
  "static_assertions",
  "windows",
  "windows-core",
@@ -77,8 +67,8 @@ dependencies = [
 
 [[package]]
 name = "accesskit_xplat"
-version = "0.1.1"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+version = "0.2.0"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -444,7 +434,7 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -455,7 +445,7 @@ dependencies = [
  "color",
  "cssparser",
  "cursor-icon",
- "debug_timer 0.1.3 (git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2)",
+ "debug_timer 0.1.3 (git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0)",
  "euclid",
  "html-escape",
  "image",
@@ -488,8 +478,8 @@ dependencies = [
 
 [[package]]
 name = "blitz-host"
-version = "0.1.2"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
+version = "0.1.4"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
 dependencies = [
  "blitz-dom",
  "blitz-host-bridge",
@@ -504,8 +494,8 @@ dependencies = [
 
 [[package]]
 name = "blitz-host-bridge"
-version = "0.1.2"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
+version = "0.1.4"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -519,8 +509,8 @@ dependencies = [
 
 [[package]]
 name = "blitz-host-protocol"
-version = "0.1.2"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
+version = "0.1.4"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
 dependencies = [
  "serde",
  "serde_json",
@@ -528,19 +518,21 @@ dependencies = [
 
 [[package]]
 name = "blitz-host-transport"
-version = "0.1.2"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.2#f5cd8ad8827e178795ced139946281fea12f61bd"
+version = "0.1.4"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
 dependencies = [
  "blitz-host-protocol",
+ "interprocess",
  "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -551,7 +543,7 @@ dependencies = [
 [[package]]
 name = "blitz-net"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "blitz-traits",
  "data-url",
@@ -563,12 +555,13 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "anyrender",
  "anyrender_svg",
  "blitz-dom",
  "blitz-traits",
+ "bytemuck",
  "color",
  "euclid",
  "kurbo",
@@ -584,7 +577,7 @@ dependencies = [
 [[package]]
 name = "blitz-shell"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "accesskit",
  "accesskit_xplat",
@@ -607,7 +600,7 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "atomic_refcell",
  "bitflags 2.13.2",
@@ -1116,7 +1109,7 @@ checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 
 [[package]]
 name = "derive_more"
@@ -1388,7 +1381,7 @@ dependencies = [
 [[package]]
 name = "dioxus-native"
 version = "0.7.0"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "android-activity",
  "anyrender",
@@ -1423,7 +1416,7 @@ dependencies = [
 [[package]]
 name = "dioxus-native-dom"
 version = "0.7.0"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -1551,6 +1544,12 @@ checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
  "libloading",
 ]
+
+[[package]]
+name = "doctest-file"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
 
 [[package]]
 name = "document-features"
@@ -1778,9 +1777,8 @@ dependencies = [
 
 [[package]]
 name = "fontique"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6688bc1294fe7117d788937b6c53480169b29c566954af490830d4c09da9516a"
+version = "0.11.0"
+source = "git+https://github.com/linebender/parley?rev=6a9444f402b2c8698cf0c28dcd7ea8b469688f16#6a9444f402b2c8698cf0c28dcd7ea8b469688f16"
 dependencies = [
  "hashbrown 0.17.1",
  "linebender_resource_handle",
@@ -2486,6 +2484,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 dependencies = [
  "cfb",
+]
+
+[[package]]
+name = "interprocess"
+version = "2.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cb02ffbf25e8ef0f4a95bff054eef75f6d1bf16919474cf2caa63b21997478a"
+dependencies = [
+ "doctest-file",
+ "libc",
+ "recvmsg",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3493,7 +3504,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyrender_vello",
  "blitz-dom",
@@ -3512,7 +3523,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase-macro"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -3558,14 +3569,41 @@ dependencies = [
 [[package]]
 name = "parlance"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b6937eda350acc1a5d05872c3cbf99fe78619c269096e2be3d4a350058639d5"
+source = "git+https://github.com/linebender/parley?rev=6a9444f402b2c8698cf0c28dcd7ea8b469688f16#6a9444f402b2c8698cf0c28dcd7ea8b469688f16"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "parley"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22d2ff88bd3f7d68d1d9b09c7e6209f9a8e8c05088295140a2bcf2e9b17038c5"
+version = "0.11.0"
+source = "git+https://github.com/linebender/parley?rev=6a9444f402b2c8698cf0c28dcd7ea8b469688f16#6a9444f402b2c8698cf0c28dcd7ea8b469688f16"
+dependencies = [
+ "fontique",
+ "hashbrown 0.17.1",
+ "linebender_resource_handle",
+ "parlance",
+ "parley_engine",
+ "smallvec",
+]
+
+[[package]]
+name = "parley_data"
+version = "0.11.0"
+source = "git+https://github.com/linebender/parley?rev=6a9444f402b2c8698cf0c28dcd7ea8b469688f16#6a9444f402b2c8698cf0c28dcd7ea8b469688f16"
+dependencies = [
+ "icu_properties",
+]
+
+[[package]]
+name = "parley_emoji"
+version = "0.11.0"
+source = "git+https://github.com/linebender/parley?rev=6a9444f402b2c8698cf0c28dcd7ea8b469688f16#6a9444f402b2c8698cf0c28dcd7ea8b469688f16"
+
+[[package]]
+name = "parley_engine"
+version = "0.11.0"
+source = "git+https://github.com/linebender/parley?rev=6a9444f402b2c8698cf0c28dcd7ea8b469688f16#6a9444f402b2c8698cf0c28dcd7ea8b469688f16"
 dependencies = [
  "fontique",
  "harfrust",
@@ -3576,16 +3614,8 @@ dependencies = [
  "linebender_resource_handle",
  "parlance",
  "parley_data",
+ "parley_emoji",
  "skrifa",
-]
-
-[[package]]
-name = "parley_data"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1567535334d6ba2d3cde19221ba9a7bd0fabb3cbd99046ddfb10ae061cfcc889"
-dependencies = [
- "icu_properties",
 ]
 
 [[package]]
@@ -4059,6 +4089,12 @@ dependencies = [
  "font-types",
  "once_cell",
 ]
+
+[[package]]
+name = "recvmsg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "redox_event"
@@ -4865,7 +4901,7 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/techton7/blitz.git?tag=v0.3.0-alpha.2#3c78dd3ddcb40cc5aca3bcd761ca28e09087238c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.1.0#883df554d9034306b8a1800dafd74419cc8dfee1"
 dependencies = [
  "bitflags 2.13.2",
  "stylo",
@@ -5291,9 +5327,8 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.14.0"
-source = "git+https://github.com/DioxusLabs/taffy?rev=c17b313cd1be5a4def91522cf3ea5995e664ebf7#c17b313cd1be5a4def91522cf3ea5995e664ebf7"
+source = "git+https://github.com/DioxusLabs/taffy?rev=4863877b9cab21645b160d7f247901f90214fe27#4863877b9cab21645b160d7f247901f90214fe27"
 dependencies = [
- "arrayvec",
  "serde",
  "slotmap",
  "smallvec",
@@ -6431,8 +6466,7 @@ dependencies = [
 [[package]]
 name = "wgpu_context"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d6c2553d5b114dfd941fa3372c7df1e1cde7bd81800e89aa13b7e3af2e4be9b"
+source = "git+https://github.com/techton7/anyrender?tag=wgpu_context-v0.9.1-win-policy#dda945f994d4205f1ae14923efa8c61dd30d1ddb"
 dependencies = [
  "futures-intrusive",
  "wgpu",
@@ -6475,6 +6509,12 @@ dependencies = [
  "bytemuck",
  "safe_arch",
 ]
+
+[[package]]
+name = "widestring"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "winapi-util"

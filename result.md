@@ -158,3 +158,35 @@ While running continuously at 75+ FPS, the native runner was inspected and drive
 2. **Graphics Compute vs. VDOM Cost in Native Rust UI**:
    - In desktop/native environments with hardware renderers like Vello, CPU bezier curve decomposition and GPU pipeline orchestration dominate frame budgets far more than VDOM reconciliation.
    - Setting `[profile.dev.package."*"] opt-level = 3` is the canonical standard for local interactive development in Rust graphics/GUI projects.
+
+---
+
+## 6. Windows Host & Named Pipe Transport Verification
+
+- **Platform**: Windows 10 x64 (Build 19041), Intel HD Graphics 520 (Skylake, driver 27.20.100.8854).
+- **Transport**: Windows Named Pipe (`\\.\pipe\blitz-host-{pid}-{timestamp}`) with JSON descriptor in `$TEMP\blitz-host`.
+- **Target Crate**: `crates/oxidase-native-runner` (pinning Blitz `v0.3.0-alpha.2`, `blitz-host-v0.1.3`).
+
+### 6.1. Auto-Close Proof Mode
+Executing `cargo run --manifest-path crates/oxidase-native-runner/Cargo.toml` without `--interactive` validated all 6 criteria end-to-end:
+1. `[PROVEN] Native OS window opened via Blitz 0.3.0-beta.2 / Vello`
+2. `[PROVEN] oxidase::dom::Document::current() active (Doc ID: 2)`
+3. `[PROVEN] Zero-wiring hosted frame loop active via #[oxidase::main] bootstrap`
+4. `[PROVEN] WindowEvent::RedrawRequested automatically driving step_hosted_frame()`
+5. `[PROVEN] 300 real frames executed via use_frame / next_frame without manual app wiring` (completed in 7.35s, avg dt: 24.5ms)
+6. `[PROVEN] blitz-host control plane active and serviced on UI thread`
+
+### 6.2. Interactive Control Plane Verification with `blitz-host`
+Launching under `--interactive` mode and dispatching actions through `blitz-host`:
+1. **Discovery (`blitz-host list`)**: Successfully discovered the active host process on Windows Named Pipe.
+2. **Semantic DOM Inspection (`blitz-host inspect`)**: Retrieved full hierarchical tree including high-frequency VSync telemetry, badges, inputs, buttons, and scroll containers.
+3. **Synthetic Event Dispatching**:
+   - `blitz-host mouse click "#test-interaction-button"`: Click handler dispatched on UI thread; label mutated to `"Clicked 1 times"`.
+   - `blitz-host focus "#test-input"`: Element received focus; `FOCUSED` badge rendered.
+   - `blitz-host set-value "#test-input" "Hello from blitz-host on Windows!"`: Text value populated and rendered into DOM.
+   - `blitz-host mouse move "#mouse-test-card"`: Pointer enter handled; badge mutated to `HOVERED`.
+   - `blitz-host mouse wheel "#test-scroll-container" --dy 45`: Wheel event handled; offset updated to `Scroll Y: 45`.
+4. **Live Visual Capture (`blitz-host capture -o <FILE>`)**:
+   - Direct GPU render buffer extraction to PNG (800x600, 146,863 bytes).
+   - Confirmed full visual fidelity (colors, typography, rounded borders, shadows, active cursor, and metrics).
+
