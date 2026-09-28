@@ -22,6 +22,8 @@ pub mod dom;
 pub mod launch;
 pub use launch::*;
 
+pub mod capability;
+
 pub mod frame;
 pub mod prelude;
 

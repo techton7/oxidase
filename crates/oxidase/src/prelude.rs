@@ -7,6 +7,10 @@
 pub use crate::dom::Document;
 pub use crate::frame::{next_frame, use_frame, FrameInfo, NextFrameFuture};
 pub use crate::runtime::{get_viewport, measure_rect};
+pub use crate::capability::{
+    default_commands, default_queries, focus_element, DefaultCapability, FocusOptions,
+    HostCommands, HostError, HostQueries, NativeCapability, WebCapability,
+};
 pub use crate::use_watcher;
 pub use crate::watcher_guard::WatcherGuard;
 pub use crate::launch::is_debug_control_active;
