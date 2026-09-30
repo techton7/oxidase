@@ -3,9 +3,6 @@
 //! Provides a unified, synchronous DOM access API across Web (`wasm32`)
 //! and Native (`blitz-dom`).
 
-pub mod types;
-pub use types::*;
-
 #[cfg(target_arch = "wasm32")]
 #[path = "web.rs"]
 mod backend;
@@ -18,7 +15,15 @@ mod backend;
 #[path = "mock.rs"]
 mod backend;
 
-pub use backend::{Document, Element};
+pub mod element;
+pub use element::*;
+
+pub use backend::Document;
+
+/// Returns the ambient active `Document`.
+pub fn document() -> Document {
+    Document::current().unwrap_or_default()
+}
 
 #[cfg(test)]
 mod tests {
@@ -28,23 +33,6 @@ mod tests {
     fn test_mock_document_current() {
         // On non-wasm host without active mock, current() returns None
         assert!(Document::current().is_none());
-    }
-
-    #[test]
-    fn test_types_rect_calculations() {
-        let rect = Rect::new(10.0, 20.0, 100.0, 50.0);
-        assert_eq!(rect.left(), 10.0);
-        assert_eq!(rect.top(), 20.0);
-        assert_eq!(rect.right(), 110.0);
-        assert_eq!(rect.bottom(), 70.0);
-    }
-
-    #[test]
-    fn test_types_viewport() {
-        let vp = Viewport::new(1920.0, 1080.0, 0.0, 150.0);
-        assert_eq!(vp.width, 1920.0);
-        assert_eq!(vp.height, 1080.0);
-        assert_eq!(vp.scroll_y, 150.0);
     }
 
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]

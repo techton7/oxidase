@@ -4,13 +4,16 @@
 //! For low-level frame runtime primitives and fallible scheduling controls, import
 //! from [`oxidase::frame`](crate::frame).
 
-pub use crate::dom::Document;
-pub use crate::frame::{next_frame, use_frame, FrameInfo, NextFrameFuture};
-pub use crate::runtime::{get_viewport, measure_rect};
-pub use crate::capability::{
-    default_commands, default_queries, focus_element, DefaultCapability, FocusOptions,
-    HostCommands, HostError, HostQueries, NativeCapability, WebCapability,
+pub use crate::dom::{document, Document, MountedHandle};
+pub use crate::dom::element::{
+    Element as DomElement, FocusOptions, ScrollBehavior, ScrollIntoViewOptions,
+    ScrollLogicalPosition,
 };
+pub use crate::error::{Error, HostError, Result};
+pub use crate::scroll::Scrollable;
+pub use crate::window::{window, Window};
+pub use crate::runtime::geometry::{Point, Rect, Size};
+pub use crate::frame::{next_frame, use_frame, FrameInfo, NextFrameFuture};
 pub use crate::use_watcher;
 pub use crate::watcher_guard::WatcherGuard;
 pub use crate::launch::is_debug_control_active;

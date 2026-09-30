@@ -24,6 +24,7 @@ use super::types::{FrameInfo, FrameRequestGuard};
 /// ```rust,no_run
 /// use dioxus::prelude::*;
 /// use oxidase::prelude::*;
+/// # use dioxus::prelude::Element;
 ///
 /// #[component]
 /// fn Spinner() -> Element {
@@ -60,9 +61,11 @@ pub fn use_frame(mut on_frame: impl FnMut(FrameInfo) + 'static) {
 /// ```rust,no_run
 /// use dioxus::prelude::*;
 /// use oxidase::prelude::*;
+/// # use dioxus::prelude::Element;
 ///
 /// #[component]
 /// fn FadeIn() -> Element {
+
 ///     let mut opacity = use_signal(|| 0.0);
 ///     use_future(move || async move {
 ///         while opacity() < 1.0 {

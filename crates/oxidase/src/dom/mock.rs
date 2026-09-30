@@ -1,8 +1,5 @@
 //! Mock/Host DOM backend implementation for non-browser / test environments.
 
-#[allow(unused_imports)]
-use super::types::*;
-
 /// Mock DOM Document implementation for host environments and unit testing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Document {
@@ -20,6 +17,34 @@ impl Document {
         Self { _private: () }
     }
 
+    /// Returns the element with the specified ID if present in mock document.
+    pub fn element_by_id(&self, _id: &str) -> Option<crate::dom::element::Element> {
+        None
+    }
+
+    /// Returns the element that currently holds active keyboard focus in the mock document.
+    pub fn active_element(&self) -> Option<crate::dom::element::Element> {
+        None
+    }
+
+    /// Returns the Window handle associated with this document.
+    pub fn window(&self) -> crate::window::Window {
+        crate::window::window()
+    }
+
+    /// Sets the document viewport scroll offset.
+    pub fn set_viewport_scroll(&self, _x: f64, _y: f64) {}
+
+    /// Queries live viewport dimensions (width, height).
+    pub fn inner_size(&self) -> (f64, f64) {
+        (0.0, 0.0)
+    }
+
+    /// Queries live viewport scroll offset (x, y).
+    pub fn viewport_scroll_offset(&self) -> (f64, f64) {
+        (0.0, 0.0)
+    }
+
     /// Queries mock viewport.
     pub fn viewport(&self) -> crate::runtime::geometry::Viewport {
         crate::runtime::geometry::Viewport::default()
@@ -31,8 +56,8 @@ impl Document {
     }
 
     /// Requests mock focus.
-    pub fn set_focus(&self, element_id: &str) -> Result<(), crate::capability::HostError> {
-        Err(crate::capability::HostError::ElementNotFound(element_id.to_string()))
+    pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
+        Err(crate::error::HostError::ElementNotFound(element_id.to_string()))
     }
 
     /// Queries mock active element.
@@ -43,18 +68,5 @@ impl Document {
     /// Queries mock reference hidden.
     pub fn is_reference_hidden(&self, _anchor_ids: &[&str]) -> bool {
         false
-    }
-}
-
-/// Mock DOM Element implementation.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Element {
-    _private: (),
-}
-
-impl Element {
-    /// Creates a mock Element for testing.
-    pub fn mock() -> Self {
-        Self { _private: () }
     }
 }

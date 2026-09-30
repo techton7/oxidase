@@ -1,22 +1,22 @@
-//! Native (Blitz) DOM backend implementation.
-
-#[allow(unused_imports)]
-use super::types::*;
 use blitz_dom::BaseDocument;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Native Blitz Document handle wrapping the real `BaseDocument`.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Document {
-    inner: Rc<RefCell<BaseDocument>>,
+    inner: Option<Rc<RefCell<BaseDocument>>>,
 }
 
 impl std::fmt::Debug for Document {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Document")
-            .field("document_id", &self.inner.borrow().id())
-            .finish()
+        let mut s = f.debug_struct("Document");
+        if let Some(base) = &self.inner {
+            s.field("document_id", &base.borrow().id());
+        } else {
+            s.field("active", &false);
+        }
+        s.finish()
     }
 }
 
@@ -26,13 +26,17 @@ impl Document {
         // 1. Check Dioxus root context if running within an active Dioxus runtime
         if dioxus::core::Runtime::try_current().is_some() {
             if let Some(doc) = dioxus::prelude::try_consume_context::<Document>() {
-                return Some(doc);
+                if doc.inner.is_some() {
+                    return Some(doc);
+                }
             }
         }
 
         // 2. Check thread-local (active during harness dispatch or scoped execution in Blitz)
         if let Some(doc) = CURRENT_NATIVE_DOC.with(|cell| cell.borrow().clone()) {
-            return Some(doc);
+            if doc.inner.is_some() {
+                return Some(doc);
+            }
         }
 
         None
@@ -40,12 +44,16 @@ impl Document {
 
     /// Construct a Document wrapping a real Blitz BaseDocument.
     pub fn from_base(inner: Rc<RefCell<BaseDocument>>) -> Self {
-        Self { inner }
+        Self {
+            inner: Some(inner),
+        }
     }
 
     /// Access the underlying real `BaseDocument`.
     pub fn base(&self) -> &Rc<RefCell<BaseDocument>> {
-        &self.inner
+        self.inner
+            .as_ref()
+            .expect("Document has no active BaseDocument")
     }
 
     /// Sets the thread-local active native Document for the duration of a closure.
@@ -70,9 +78,65 @@ impl Document {
         dioxus::prelude::provide_context(self);
     }
 
+    /// Returns the element with the specified ID if present in the active document.
+    pub fn element_by_id(&self, id: &str) -> Option<crate::dom::element::Element> {
+        let base = self.inner.as_ref()?;
+        let node_id = base.borrow().get_element_by_id(id)?;
+        Some(crate::dom::element::Element::from_native(
+            base.clone(),
+            node_id,
+        ))
+    }
+
+    /// Returns the element that currently holds active keyboard focus in the document.
+    pub fn active_element(&self) -> Option<crate::dom::element::Element> {
+        let base = self.inner.as_ref()?;
+        let node_id = base.borrow().active_focus_node_id()?;
+        Some(crate::dom::element::Element::from_native(
+            base.clone(),
+            node_id,
+        ))
+    }
+
+    /// Returns the Window handle associated with this document.
+    pub fn window(&self) -> crate::window::Window {
+        crate::window::window()
+    }
+
+    /// Sets the document viewport scroll offset.
+    pub fn set_viewport_scroll(&self, x: f64, y: f64) {
+        if let Some(base) = &self.inner {
+            base.borrow_mut()
+                .set_viewport_scroll(blitz_dom::Point { x, y });
+        }
+    }
+
+    /// Queries the live viewport dimensions (width, height) directly from the Blitz document.
+    pub fn inner_size(&self) -> (f64, f64) {
+        let Some(base) = &self.inner else {
+            return (0.0, 0.0);
+        };
+        let base = base.borrow();
+        let vp = base.viewport();
+        let scale = (vp.hidpi_scale * vp.zoom).max(0.001) as f64;
+        (vp.window_size.0 as f64 / scale, vp.window_size.1 as f64 / scale)
+    }
+
+    /// Queries the live viewport scroll offset (x, y) directly from the Blitz document.
+    pub fn viewport_scroll_offset(&self) -> (f64, f64) {
+        let Some(base) = &self.inner else {
+            return (0.0, 0.0);
+        };
+        let scroll = base.borrow().viewport_scroll();
+        (scroll.x, scroll.y)
+    }
+
     /// Queries the live viewport dimensions and scroll offsets from the underlying Blitz document.
     pub fn viewport(&self) -> crate::runtime::geometry::Viewport {
-        let base = self.inner.borrow();
+        let Some(base) = &self.inner else {
+            return crate::runtime::geometry::Viewport::default();
+        };
+        let base = base.borrow();
         let vp = base.viewport();
         let scroll = base.viewport_scroll();
         let scale = (vp.hidpi_scale * vp.zoom).max(0.001) as f64;
@@ -89,7 +153,7 @@ impl Document {
     /// Measures the bounding client rectangle of an element by ID by accumulating
     /// layout coordinates over the ancestor hierarchy and accounting for viewport scroll.
     pub fn measure_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
-        let base = self.inner.borrow();
+        let base = self.inner.as_ref()?.borrow();
         let node_id = base.get_element_by_id(element_id)?;
         let node = base.get_node(node_id)?;
         let layout = node.final_layout();
@@ -123,18 +187,25 @@ impl Document {
     }
 
     /// Requests focus for the element with the specified ID in the Blitz DOM.
-    pub fn set_focus(&self, element_id: &str) -> Result<(), crate::capability::HostError> {
-        let mut base = self.inner.borrow_mut();
-        let node_id = base
+    pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
+        let base = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
+        let mut base_mut = base.borrow_mut();
+        let node_id = base_mut
             .get_element_by_id(element_id)
-            .ok_or_else(|| crate::capability::HostError::ElementNotFound(element_id.to_string()))?;
-        base.set_focus_to(node_id);
+            .ok_or_else(|| crate::error::HostError::ElementNotFound(element_id.to_string()))?;
+        base_mut.set_focus_to(node_id);
         Ok(())
     }
 
     /// Checks if the element with the specified ID currently holds document focus in the Blitz DOM.
     pub fn is_element_active(&self, element_id: &str) -> bool {
-        let base = self.inner.borrow();
+        let Some(base) = &self.inner else {
+            return false;
+        };
+        let base = base.borrow();
         let Some(node_id) = base.get_element_by_id(element_id) else {
             return false;
         };
@@ -165,7 +236,3 @@ impl Document {
 std::thread_local! {
     static CURRENT_NATIVE_DOC: RefCell<Option<Document>> = const { RefCell::new(None) };
 }
-
-/// Native Blitz Element handle (placeholder for next slice).
-#[derive(Clone, Debug, Default)]
-pub struct Element;

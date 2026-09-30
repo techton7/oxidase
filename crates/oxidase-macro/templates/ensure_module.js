@@ -77,15 +77,27 @@
                 };
             }
 
-            const rawCleanup = mod[fnName](...payload, emit);
+            let rawCleanup;
+            try {
+                rawCleanup = mod[fnName](...payload, emit);
+            } catch (err) {
+                console.error("[oxidase Watcher Init Error in " + fnName + "]:", err);
+                send({ __bindgen_err: err?.message || String(err) });
+                return;
+            }
             const cleanup = function() {
                 if (cancelTimer) cancelTimer();
                 if (typeof rawCleanup === "function") {
-                    rawCleanup();
+                    try {
+                        rawCleanup();
+                    } catch (e) {
+                        console.error("[oxidase Watcher Cleanup Error in " + fnName + "]:", e);
+                    }
                 }
             };
             window.__OXIDASE__.watchers.set(subId, cleanup);
         };
+
     }
     if (!window.__OXIDASE__.modules["__MODULE_HASH__"]) {
         window.__OXIDASE__.modules["__MODULE_HASH__"] = (function() {

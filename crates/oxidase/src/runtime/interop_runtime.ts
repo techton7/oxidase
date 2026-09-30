@@ -27,7 +27,7 @@ export function measureRect(elementId: string): Rect | null {
         return null;
     }
     const el = document.getElementById(elementId);
-    if (!(el instanceof HTMLElement)) {
+    if (!(el instanceof Element)) {
         return null;
     }
     const r = el.getBoundingClientRect();
@@ -67,8 +67,8 @@ export function focusElement(elementId: string, preventScroll: boolean): boolean
         return false;
     }
     const el = document.getElementById(elementId);
-    if (el instanceof HTMLElement) {
-        el.focus({ preventScroll });
+    if (el && typeof (el as any).focus === "function") {
+        (el as any).focus({ preventScroll });
         return true;
     }
     return false;
@@ -82,11 +82,12 @@ export function isElementActive(targetId: string): boolean {
         return false;
     }
     const el = document.getElementById(targetId);
-    return el instanceof HTMLElement && document.activeElement === el;
+    return el instanceof Element && document.activeElement === el;
 }
 
 /**
  * Checks if any anchor element is occluded or outside viewport bounds.
+ * Missing or detached elements return true (occluded/hidden), matching native Blitz semantics.
  */
 export function isReferenceHidden(anchorIds: string[]): boolean {
     if (typeof document === "undefined") {
@@ -94,18 +95,20 @@ export function isReferenceHidden(anchorIds: string[]): boolean {
     }
     for (const id of anchorIds) {
         const el = document.getElementById(id);
-        if (el instanceof HTMLElement) {
-            const rect = el.getBoundingClientRect();
-            if (rect.width === 0 && rect.height === 0) {
-                return true;
-            }
-            if (rect.bottom < 0 || rect.top > window.innerHeight) {
-                return true;
-            }
-            if (rect.right < 0 || rect.left > window.innerWidth) {
-                return true;
-            }
+        if (!(el instanceof Element)) {
+            return true;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) {
+            return true;
+        }
+        if (rect.bottom < 0 || rect.top > window.innerHeight) {
+            return true;
+        }
+        if (rect.right < 0 || rect.left > window.innerWidth) {
+            return true;
         }
     }
     return false;
 }
+

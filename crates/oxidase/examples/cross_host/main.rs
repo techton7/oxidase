@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 use oxidase::prelude::*;
+use dioxus::prelude::Element;
 
 #[oxidase::main]
 fn main() {
