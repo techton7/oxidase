@@ -317,13 +317,18 @@ impl Element {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let mut base = doc.borrow_mut();
-                let Some(node) = base.get_node_mut(*node_id) else {
-                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
-                };
-                let offset = node.scroll_offset_mut();
-                offset.x = x;
-                offset.y = y;
+                let nid = *node_id;
+                {
+                    let mut base = doc.borrow_mut();
+                    let Some(node) = base.get_node_mut(nid) else {
+                        return Err(HostError::ElementNotFound(format!("NodeId: {:?}", nid)));
+                    };
+                    let offset = node.scroll_offset_mut();
+                    offset.x = x;
+                    offset.y = y;
+                }
+                let native_doc = crate::dom::Document::from_base(doc.clone());
+                native_doc.dispatch_element_scroll_by_node_id(nid);
                 Ok(())
             }
             #[cfg(target_arch = "wasm32")]

@@ -3,13 +3,14 @@ resolver = "2"
 members = [
     "crates/oxidase",
     "crates/oxidase-macro",
+    "crates/oxidase-floating-ui",
 ]
 exclude = [
     "crates/oxidase-native-runner",
 ]
 
 [workspace.package]
-version = "0.1.9"
+version = "0.1.10"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/techton7/oxidase"
@@ -21,6 +22,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"
 thiserror = "2.0"
+futures-timer = { version = "3.0", features = ["wasm-bindgen"] }
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 quote = "1.0"
 proc-macro2 = "1.0"
@@ -28,10 +30,14 @@ heck = "0.5"
 swc_core = { version = "78.0", features = ["common", "ecma_parser", "ecma_ast", "ecma_visit", "ecma_codegen", "ecma_transforms_typescript"] }
 
 [patch.crates-io]
-blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.1.0" }
-blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.1.0" }
-blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.1.0" }
-blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.1.0" }
 wgpu_context = { git = "https://github.com/techton7/anyrender", tag = "wgpu_context-v0.9.1-win-policy" }
+
+[patch."https://github.com/techton7/blitz.git"]
+blitz-shell = { path = "../../blitz/packages/blitz-shell" }
+blitz-dom = { path = "../../blitz/packages/blitz-dom" }
+blitz-traits = { path = "../../blitz/packages/blitz-traits" }
+blitz-paint = { path = "../../blitz/packages/blitz-paint" }
+dioxus-native = { path = "../../blitz/packages/dioxus-native" }
+dioxus-native-dom = { path = "../../blitz/packages/dioxus-native-dom" }
 
 

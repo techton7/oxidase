@@ -1,5 +1,7 @@
 use std::fmt;
 
+type CleanupFn = Box<dyn FnOnce() + 'static>;
+
 /// Unified RAII lifecycle guard for active JavaScript/browser watchers.
 ///
 /// Dropping this guard automatically cancels the asynchronous event receiver task
@@ -9,6 +11,7 @@ pub struct WatcherGuard {
     name: &'static str,
     sub_id: u64,
     task: Option<::dioxus::core::Task>,
+    custom_cleanup: Option<CleanupFn>,
     cleaned: bool,
 }
 
@@ -19,6 +22,34 @@ impl WatcherGuard {
             name,
             sub_id,
             task,
+            custom_cleanup: None,
+            cleaned: false,
+        }
+    }
+
+    /// Creates a no-op `WatcherGuard` that performs no cleanup when dropped.
+    pub fn noop() -> Self {
+        Self {
+            name: "noop",
+            sub_id: 0,
+            task: None,
+            custom_cleanup: None,
+            cleaned: true,
+        }
+    }
+
+    /// Creates a new `WatcherGuard` with a custom teardown closure.
+    pub fn with_cleanup(
+        name: &'static str,
+        sub_id: u64,
+        task: Option<::dioxus::core::Task>,
+        cleanup: impl FnOnce() + 'static,
+    ) -> Self {
+        Self {
+            name,
+            sub_id,
+            task,
+            custom_cleanup: Some(Box::new(cleanup)),
             cleaned: false,
         }
     }
@@ -52,6 +83,10 @@ impl WatcherGuard {
             }
         }
 
+        if let Some(cleanup_fn) = self.custom_cleanup.take() {
+            cleanup_fn();
+        }
+
         crate::internal::dispatch_cleanup(self.sub_id);
     }
 }
@@ -70,3 +105,10 @@ impl fmt::Debug for WatcherGuard {
             .finish()
     }
 }
+
+impl Default for WatcherGuard {
+    fn default() -> Self {
+        Self::noop()
+    }
+}
+

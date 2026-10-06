@@ -18,6 +18,9 @@ mod backend;
 pub mod element;
 pub use element::*;
 
+pub mod observer;
+pub use observer::*;
+
 pub use backend::Document;
 
 /// Returns the ambient active `Document`.

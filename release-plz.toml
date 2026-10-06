@@ -3,9 +3,13 @@ pr_labels = ["release"]
 semver_check = false
 
 [[package]]
-name = "oxidase"
+name = "oxidase-macro"
 version_group = "main"
 
 [[package]]
-name = "oxidase-macro"
+name = "oxidase-floating-ui"
+version_group = "main"
+
+[[package]]
+name = "oxidase"
 version_group = "main"

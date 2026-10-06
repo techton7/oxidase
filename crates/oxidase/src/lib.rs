@@ -15,6 +15,9 @@ pub use blitz_host;
 pub mod watcher_guard;
 pub use watcher_guard::WatcherGuard;
 
+pub mod watcher;
+pub use watcher::*;
+
 pub mod runtime;
 
 pub mod dom;

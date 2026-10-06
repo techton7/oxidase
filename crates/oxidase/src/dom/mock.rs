@@ -69,4 +69,54 @@ impl Document {
     pub fn is_reference_hidden(&self, _anchor_ids: &[&str]) -> bool {
         false
     }
+
+    /// Returns the active observer counts for element scroll listeners.
+    pub fn element_scroll_observer_count(&self, _element_id: Option<&str>) -> usize {
+        0
+    }
 }
+
+pub(crate) fn observe_element_resize(
+    _element_id: &str,
+    _callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_resize", 0, None))
+}
+
+pub(crate) fn observe_capture_events(
+    _callback: Box<dyn FnMut(crate::dom::observer::CaptureEvent) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_capture", 0, None))
+}
+
+pub(crate) fn observe_transition_lifecycle(
+    _element_id: &str,
+    _fallback_timeout_ms: u64,
+    _callback: Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_transition", 0, None))
+}
+
+pub(crate) fn observe_form_reset(
+    _element_id: &str,
+    _form_id: Option<&str>,
+    _callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_form_reset", 0, None))
+}
+
+pub(crate) fn observe_scroll(
+    _callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_scroll", 0, None))
+}
+
+pub(crate) fn observe_element_scroll(
+    _element_id: &str,
+    _callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_element_scroll", 0, None))
+}
+
+
+
