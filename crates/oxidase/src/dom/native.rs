@@ -52,6 +52,7 @@ impl Document {
     }
 
     /// Internal constructor without re-attaching engine bridges.
+    #[allow(dead_code)]
     pub(crate) fn from_base_raw(inner: Rc<RefCell<BaseDocument>>) -> Self {
         Self {
             inner: Some(inner),
@@ -60,85 +61,7 @@ impl Document {
 
     /// Wires Blitz engine-level capture events and animation completion signals into the Oxidase observer substrate.
     pub fn attach_engine_bridges(&self) {
-        let Some(base) = &self.inner else {
-            return;
-        };
-
-        const OXIDASE_BLITZ_CAPTURE_BRIDGE_ID: u64 = 0x0000_CA97_0000_0001;
-        const OXIDASE_BLITZ_ANIMATION_BRIDGE_ID: u64 = 0x0000_A913_0000_0001;
-
-        base.borrow_mut().add_capture_handler(
-            OXIDASE_BLITZ_CAPTURE_BRIDGE_ID,
-            Box::new(move |dom_event, _chain, path_ids| {
-                let kind = match &dom_event.data {
-                    blitz_dom::dom_events::DomEventData::PointerDown(_) => {
-                        crate::dom::observer::CaptureEventKind::PointerDown
-                    }
-                    blitz_dom::dom_events::DomEventData::FocusIn(_) => {
-                        crate::dom::observer::CaptureEventKind::FocusIn
-                    }
-                    blitz_dom::dom_events::DomEventData::KeyDown(key_evt) => {
-                        let key = match &key_evt.key {
-                            blitz_dom::keyboard_types::Key::Character(s) => s.clone(),
-                            other => other.to_string(),
-                        };
-                        crate::dom::observer::CaptureEventKind::KeyDown { key }
-                    }
-                    _ => return,
-                };
-
-                let target_id = path_ids.first().cloned();
-                let event = crate::dom::observer::CaptureEvent {
-                    kind,
-                    target_id,
-                    path_ids: path_ids.to_vec(),
-                };
-                CURRENT_OBSERVERS.with(|cell| {
-                    let mut reg = cell.borrow_mut();
-                    for cb in reg.capture_observers.values_mut() {
-                        cb(event.clone());
-                    }
-                });
-            }),
-        );
-
-        let doc_weak = Rc::downgrade(base);
-        base.borrow_mut().add_animation_lifecycle_handler(
-            OXIDASE_BLITZ_ANIMATION_BRIDGE_ID,
-            Box::new(move |anim_event| {
-                if let Some(doc_rc) = doc_weak.upgrade() {
-                    let doc = Document::from_base_raw(doc_rc);
-                    match anim_event {
-                        blitz_dom::AnimationLifecycleEvent::End {
-                            element_id,
-                            animation_name,
-                            ..
-                        } => {
-                            if let Some(id) = element_id {
-                                doc.dispatch_animation_end(&id, &animation_name);
-                            }
-                        }
-                        blitz_dom::AnimationLifecycleEvent::Cancel {
-                            element_id,
-                            animation_name,
-                            ..
-                        } => {
-                            if let Some(id) = element_id {
-                                doc.dispatch_animation_cancel(&id, &animation_name);
-                            }
-                        }
-                    }
-                }
-            }),
-        );
-    }
-
-    /// Forwards a live Blitz UiEvent directly into the underlying Blitz Document event loop.
-    pub fn handle_ui_event(&self, event: blitz_dom::dom_events::UiEvent) {
-        if let Some(base) = &self.inner {
-            use blitz_dom::Document as _;
-            base.clone().handle_ui_event(event);
-        }
+        // Reserved for Blitz engine-level capture events and animation completion signals.
     }
 
     /// Access the underlying real `BaseDocument`.
