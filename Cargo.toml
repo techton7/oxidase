@@ -38,4 +38,8 @@ dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "techton-
 dioxus-native-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.0" }
 wgpu_context = { git = "https://github.com/techton7/anyrender", tag = "wgpu_context-v0.9.1-win-policy" }
 
+[profile.dev.package."*"]
+opt-level = 3
+
+
 
