@@ -68,6 +68,7 @@ dependencies = [
 [[package]]
 name = "accesskit_xplat"
 version = "0.2.0"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -230,23 +231,6 @@ dependencies = [
 
 [[package]]
 name = "anyrender_vello_cpu"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fb392bf738b1e50c50fc82824ff3f875f15632717ba732fe68e2fe6e1011e6c"
-dependencies = [
- "anyrender 0.13.0",
- "bytemuck",
- "color",
- "debug_timer 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "glifo 0.2.0",
- "kurbo",
- "peniko",
- "vello_common 0.1.0",
- "vello_cpu 0.1.0",
-]
-
-[[package]]
-name = "anyrender_vello_cpu"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a09d9356dd2b2f032345711a350c0e2326a854cb5070f899265bc80fb33884b1"
@@ -255,12 +239,12 @@ dependencies = [
  "bytemuck",
  "color",
  "debug_timer 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "glifo 0.4.0",
+ "glifo",
  "kurbo",
  "peniko",
  "pixels_window_renderer",
- "vello_common 0.3.0",
- "vello_cpu 0.3.0",
+ "vello_common",
+ "vello_cpu",
 ]
 
 [[package]]
@@ -272,12 +256,12 @@ dependencies = [
  "anyrender 0.14.0",
  "debug_timer 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-channel",
- "glifo 0.4.0",
+ "glifo",
  "kurbo",
  "peniko",
  "pollster",
  "rustc-hash 2.1.3",
- "vello_common 0.3.0",
+ "vello_common",
  "vello_gpu",
  "wasm-bindgen-futures",
  "wgpu 30.0.1",
@@ -471,6 +455,7 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "accesskit",
  "anyrender 0.14.0",
@@ -481,7 +466,7 @@ dependencies = [
  "color",
  "cssparser",
  "cursor-icon",
- "debug_timer 0.1.3",
+ "debug_timer 0.1.3 (git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0)",
  "euclid",
  "html-escape",
  "image",
@@ -515,7 +500,7 @@ dependencies = [
 [[package]]
 name = "blitz-host"
 version = "0.1.4"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.5#7ca384c48013075a700730dd48d8cf8769a2b511"
 dependencies = [
  "blitz-dom",
  "blitz-host-bridge",
@@ -531,10 +516,10 @@ dependencies = [
 [[package]]
 name = "blitz-host-bridge"
 version = "0.1.4"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.5#7ca384c48013075a700730dd48d8cf8769a2b511"
 dependencies = [
- "anyrender 0.13.0",
- "anyrender_vello_cpu 0.17.0",
+ "anyrender 0.14.0",
+ "anyrender_vello_cpu",
  "blitz-dom",
  "blitz-host-protocol",
  "blitz-host-transport",
@@ -546,7 +531,7 @@ dependencies = [
 [[package]]
 name = "blitz-host-protocol"
 version = "0.1.4"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.5#7ca384c48013075a700730dd48d8cf8769a2b511"
 dependencies = [
  "serde",
  "serde_json",
@@ -555,7 +540,7 @@ dependencies = [
 [[package]]
 name = "blitz-host-transport"
 version = "0.1.4"
-source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.4#0d8d508d6ba44db6d94f0b1edbbec16908be8f65"
+source = "git+https://github.com/techton7/blitz-host.git?tag=blitz-host-v0.1.5#7ca384c48013075a700730dd48d8cf8769a2b511"
 dependencies = [
  "blitz-host-protocol",
  "interprocess",
@@ -568,6 +553,7 @@ dependencies = [
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -578,6 +564,7 @@ dependencies = [
 [[package]]
 name = "blitz-net"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "blitz-traits",
  "data-url",
@@ -589,6 +576,7 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "anyrender 0.14.0",
  "anyrender_svg",
@@ -610,6 +598,7 @@ dependencies = [
 [[package]]
 name = "blitz-shell"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "accesskit",
  "accesskit_xplat",
@@ -632,6 +621,7 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "atomic_refcell",
  "bitflags 2.13.2",
@@ -1134,12 +1124,13 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 
 [[package]]
 name = "derive_more"
@@ -1411,10 +1402,11 @@ dependencies = [
 [[package]]
 name = "dioxus-native"
 version = "0.7.0"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "android-activity",
  "anyrender 0.14.0",
- "anyrender_vello_cpu 0.18.0",
+ "anyrender_vello_cpu",
  "anyrender_vello_hybrid",
  "blitz-dom",
  "blitz-html",
@@ -1445,6 +1437,7 @@ dependencies = [
 [[package]]
 name = "dioxus-native-dom"
 version = "0.7.0"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -1718,12 +1711,6 @@ checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
 ]
-
-[[package]]
-name = "fearless_simd"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "fearless_simd"
@@ -2021,22 +2008,6 @@ dependencies = [
 
 [[package]]
 name = "glifo"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed4a1bb24121291d27230c1b1b44e07d6a9b28cefdb32fe1581dfb84e14f940a"
-dependencies = [
- "bytemuck",
- "foldhash 0.2.0",
- "hashbrown 0.17.1",
- "log",
- "peniko",
- "skrifa",
- "smallvec",
- "vello_common 0.1.0",
-]
-
-[[package]]
-name = "glifo"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1218dedd5348c1b166ec3b8b3cbca49d2f527bd43b3fa072ea5123c523ed3f"
@@ -2048,7 +2019,7 @@ dependencies = [
  "peniko",
  "skrifa",
  "smallvec",
- "vello_common 0.3.0",
+ "vello_common",
 ]
 
 [[package]]
@@ -5030,6 +5001,7 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.0#e27cd4a130c612c2cc755d95d95e72c3d7b8331e"
 dependencies = [
  "bitflags 2.13.2",
  "stylo",
@@ -5979,46 +5951,18 @@ dependencies = [
 
 [[package]]
 name = "vello_common"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2e9aed918117e8152c9eddfd8362d73c465c23f26c44786aa331707b8a64fa2"
-dependencies = [
- "bytemuck",
- "fearless_simd 0.4.1",
- "guillotiere",
- "log",
- "peniko",
- "png 0.18.1",
- "smallvec",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "vello_common"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73c2fbe53548bcd25c8ff42f75a93770a8611a16b37bee56d7ef7b44e36027f1"
 dependencies = [
  "bytemuck",
- "fearless_simd 0.7.0",
+ "fearless_simd",
  "guillotiere",
  "log",
  "peniko",
  "png 0.18.1",
  "smallvec",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "vello_cpu"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac7349e1f55f6b801c7c277958df4ea53e7f20f21e8014910ad888b2ecda93ea"
-dependencies = [
- "bytemuck",
- "glifo 0.2.0",
- "hashbrown 0.17.1",
- "vello_common 0.1.0",
 ]
 
 [[package]]
@@ -6028,9 +5972,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed1fec424fbba6acf6cbc78bb526447eb77590d95f40419d598870fe37535212"
 dependencies = [
  "bytemuck",
- "glifo 0.4.0",
+ "glifo",
  "hashbrown 0.17.1",
- "vello_common 0.3.0",
+ "vello_common",
 ]
 
 [[package]]
@@ -6053,11 +5997,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0e01b02c55094a3bcfbf80d736221a74bc3f8914b566298b4ad3c9f05e7ac08"
 dependencies = [
  "bytemuck",
- "glifo 0.4.0",
+ "glifo",
  "hashbrown 0.17.1",
  "log",
  "thiserror 2.0.20",
- "vello_common 0.3.0",
+ "vello_common",
  "vello_gpu_shaders",
  "wgpu 30.0.1",
 ]

@@ -30,14 +30,12 @@ heck = "0.5"
 swc_core = { version = "78.0", features = ["common", "ecma_parser", "ecma_ast", "ecma_visit", "ecma_codegen", "ecma_transforms_typescript"] }
 
 [patch.crates-io]
+blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.0" }
+blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.0" }
+blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.0" }
+blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.0" }
+dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.0" }
+dioxus-native-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.0" }
 wgpu_context = { git = "https://github.com/techton7/anyrender", tag = "wgpu_context-v0.9.1-win-policy" }
-
-[patch."https://github.com/techton7/blitz.git"]
-blitz-shell = { path = "../../blitz/packages/blitz-shell" }
-blitz-dom = { path = "../../blitz/packages/blitz-dom" }
-blitz-traits = { path = "../../blitz/packages/blitz-traits" }
-blitz-paint = { path = "../../blitz/packages/blitz-paint" }
-dioxus-native = { path = "../../blitz/packages/dioxus-native" }
-dioxus-native-dom = { path = "../../blitz/packages/dioxus-native-dom" }
 
 
