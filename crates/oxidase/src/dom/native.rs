@@ -438,6 +438,60 @@ impl Document {
             }
         }
     }
+
+    /// Queries the descendant tree order of elements matching `candidate_ids` within `root_id`.
+    ///
+    /// Performs iterative depth-first pre-order traversal over `node.children`,
+    /// matching candidate IDs against `node.element_data().and_then(|el| el.id.as_deref())`.
+    pub fn query_descendant_order(
+        &self,
+        root_id: &str,
+        candidate_ids: &[&str],
+    ) -> Result<Vec<String>, crate::error::HostError> {
+        let base = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
+        let base = base.borrow();
+        let root_node_id = base
+            .get_element_by_id(root_id)
+            .ok_or_else(|| crate::error::HostError::ElementNotFound(root_id.to_string()))?;
+
+        use std::collections::HashSet;
+        let mut candidate_set: HashSet<&str> = candidate_ids.iter().copied().collect();
+        let mut ordered_ids = Vec::new();
+
+        if candidate_set.is_empty() {
+            return Ok(ordered_ids);
+        }
+
+        let mut stack = Vec::new();
+        if let Some(root_node) = base.get_node(root_node_id) {
+            for &child_id in root_node.children.iter().rev() {
+                stack.push(child_id);
+            }
+        }
+
+        while let Some(current_id) = stack.pop() {
+            if let Some(node) = base.get_node(current_id) {
+                if let Some(el) = node.element_data() {
+                    if let Some(id) = el.id.as_deref() {
+                        if candidate_set.remove(id) {
+                            ordered_ids.push(id.to_string());
+                            if candidate_set.is_empty() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                for &child_id in node.children.iter().rev() {
+                    stack.push(child_id);
+                }
+            }
+        }
+
+        Ok(ordered_ids)
+    }
 }
 
 std::thread_local! {

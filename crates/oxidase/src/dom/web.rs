@@ -80,6 +80,47 @@ impl Document {
     pub fn element_scroll_observer_count(&self, _element_id: Option<&str>) -> usize {
         0
     }
+
+    /// Queries the descendant tree order of elements matching `candidate_ids` within `root_id`.
+    ///
+    /// Verifies containment and sorts elements by document position using
+    /// `web_sys::Node::DOCUMENT_POSITION_FOLLOWING` / `PRECEDING`.
+    pub fn query_descendant_order(
+        &self,
+        root_id: &str,
+        candidate_ids: &[&str],
+    ) -> Result<Vec<String>, crate::error::HostError> {
+        let doc = self
+            .doc
+            .as_ref()
+            .ok_or_else(|| crate::error::HostError::Unsupported("No active browser document".into()))?;
+        let root = doc
+            .get_element_by_id(root_id)
+            .ok_or_else(|| crate::error::HostError::ElementNotFound(root_id.to_string()))?;
+
+        let mut matched_candidates = Vec::new();
+        for &id in candidate_ids {
+            if let Some(el) = doc.get_element_by_id(id) {
+                if root.contains(Some(&el)) {
+                    matched_candidates.push((id.to_string(), el));
+                }
+            }
+        }
+
+        matched_candidates.sort_by(|(_, a), (_, b)| {
+            let pos = a.compare_document_position(b);
+            if (pos & web_sys::Node::DOCUMENT_POSITION_FOLLOWING) != 0 {
+                std::cmp::Ordering::Less
+            } else if (pos & web_sys::Node::DOCUMENT_POSITION_PRECEDING) != 0 {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        });
+
+        let ordered_ids = matched_candidates.into_iter().map(|(id, _)| id).collect();
+        Ok(ordered_ids)
+    }
 }
 
 pub(crate) fn observe_element_resize(

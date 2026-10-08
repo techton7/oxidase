@@ -74,6 +74,17 @@ impl Document {
     pub fn element_scroll_observer_count(&self, _element_id: Option<&str>) -> usize {
         0
     }
+
+    /// Queries mock descendant order. Fails closed with Unsupported.
+    pub fn query_descendant_order(
+        &self,
+        _root_id: &str,
+        _candidate_ids: &[&str],
+    ) -> Result<Vec<String>, crate::error::HostError> {
+        Err(crate::error::HostError::Unsupported(
+            "Mock DOM does not support query_descendant_order".into(),
+        ))
+    }
 }
 
 pub(crate) fn observe_element_resize(
