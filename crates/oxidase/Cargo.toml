@@ -46,10 +46,10 @@ wasm-bindgen = "0.2"
 blitz-dom = { version = "0.3.0-beta.2", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.2", optional = true }
 blitz-shell = { version = "0.3.0-beta.2", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.2", optional = true }
 anyrender_vello = { version = "0.14.0", optional = true }
-blitz-host = { version = "0.1.4", git = "https://github.com/techton7/blitz-host.git", tag = "blitz-host-v0.1.6", features = ["dioxus-native"], optional = true }
+blitz-host = { version = "0.1.4", git = "https://github.com/techton7/blitz-host.git", tag = "blitz-host-v0.1.7", features = ["dioxus-native"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-dioxus-native = { version = "0.7.0", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.1" }
+dioxus-native = { version = "0.7.0", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.2" }
 
 
 [features]
