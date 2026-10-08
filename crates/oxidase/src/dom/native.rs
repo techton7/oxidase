@@ -96,7 +96,7 @@ impl Document {
     /// Returns the element with the specified ID if present in the active document.
     pub fn element_by_id(&self, id: &str) -> Option<crate::dom::element::Element> {
         let base = self.inner.as_ref()?;
-        let node_id = base.borrow().get_element_by_id(id)?;
+        let node_id = base.try_borrow().ok()?.get_element_by_id(id)?;
         Some(crate::dom::element::Element::from_native(
             base.clone(),
             node_id,
@@ -106,7 +106,7 @@ impl Document {
     /// Returns the element that currently holds active keyboard focus in the document.
     pub fn active_element(&self) -> Option<crate::dom::element::Element> {
         let base = self.inner.as_ref()?;
-        let node_id = base.borrow().active_focus_node_id()?;
+        let node_id = base.try_borrow().ok()?.active_focus_node_id()?;
         Some(crate::dom::element::Element::from_native(
             base.clone(),
             node_id,
@@ -599,11 +599,12 @@ pub(crate) fn observe_transition_lifecycle(
     let task = if fallback_timeout_ms > 0 && dioxus::core::Runtime::try_current().is_some() {
         Some(dioxus::prelude::spawn(async move {
             futures_timer::Delay::new(std::time::Duration::from_millis(fallback_timeout_ms)).await;
-            CURRENT_OBSERVERS.with(|cell| {
-                if let Some(mut obs) = cell.borrow_mut().transition_observers.remove(&sub_id) {
-                    (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
-                }
+            let entry = CURRENT_OBSERVERS.with(|cell| {
+                cell.borrow_mut().transition_observers.remove(&sub_id)
             });
+            if let Some(mut obs) = entry {
+                (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
+            }
         }))
     } else {
         None

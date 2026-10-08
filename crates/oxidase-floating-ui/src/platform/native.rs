@@ -225,7 +225,7 @@ impl NativeFloatingPlatform {
 
     /// Resolves an element's `NodeId` by explicit ID or generated ancestor ID.
     pub fn get_element_by_id(&self, id: &str) -> Option<NodeId> {
-        let base = self.doc.borrow();
+        let base = self.doc.try_borrow().ok()?;
         if let Some(node_id) = base.get_element_by_id(id) {
             return Some(node_id);
         }
@@ -238,7 +238,9 @@ impl NativeFloatingPlatform {
         reference: NodeId,
         floating: NodeId,
     ) -> Result<ElementRects> {
-        let base = self.doc.borrow();
+        let base = self.doc.try_borrow().map_err(|_| {
+            Error::Unsupported("Document currently mutably borrowed".to_string())
+        })?;
         let ref_rect = measure_node_rect(&base, reference).ok_or_else(|| {
             Error::Unsupported(format!("Could not measure reference node {:?}", reference))
         })?;
@@ -257,7 +259,9 @@ impl NativeFloatingPlatform {
 
     /// Returns layout dimensions for a native node.
     pub fn get_dimensions_by_node_id(&self, element: NodeId) -> Result<Dimensions> {
-        let base = self.doc.borrow();
+        let base = self.doc.try_borrow().map_err(|_| {
+            Error::Unsupported("Document currently mutably borrowed".to_string())
+        })?;
         get_node_dimensions(&base, element).ok_or_else(|| {
             Error::Unsupported(format!("Could not get dimensions for node {:?}", element))
         })
@@ -270,13 +274,17 @@ impl NativeFloatingPlatform {
 
     /// Checks if a native node has right-to-left text direction.
     pub fn is_rtl_by_node_id(&self, element: NodeId) -> bool {
-        let base = self.doc.borrow();
+        let Ok(base) = self.doc.try_borrow() else {
+            return false;
+        };
         is_node_rtl(&base, element)
     }
 
     /// Collects clipping ancestor `NodeId`s for a native node.
     pub fn get_overflow_ancestors_by_node_id(&self, element: NodeId) -> Vec<NodeId> {
-        let base = self.doc.borrow();
+        let Ok(base) = self.doc.try_borrow() else {
+            return Vec::new();
+        };
         get_node_overflow_ancestors(&base, element)
     }
 
@@ -296,7 +304,9 @@ impl NativeFloatingPlatform {
         let node_id = self
             .get_element_by_id(element_id)
             .ok_or_else(|| Error::ElementNotFound(element_id.to_string()))?;
-        let base = self.doc.borrow();
+        let base = self.doc.try_borrow().map_err(|_| {
+            Error::Unsupported("Document currently mutably borrowed".to_string())
+        })?;
         get_clipping_rect_for_node_with_resolver(
             &base,
             node_id,
@@ -324,7 +334,9 @@ impl NativeFloatingPlatform {
     /// Traverses the element's ancestor tree, collecting all scrollable/clipping ancestor element IDs.
     pub fn get_overflow_ancestors(&self, element_id: &str) -> Result<Vec<String>> {
         let (_node_id, anc_nodes) = {
-            let base = self.doc.borrow();
+            let base = self.doc.try_borrow().map_err(|_| {
+                Error::Unsupported("Document currently mutably borrowed".to_string())
+            })?;
             let node_id = self
                 .get_element_by_id(element_id)
                 .ok_or_else(|| Error::ElementNotFound(element_id.to_string()))?;
@@ -335,7 +347,9 @@ impl NativeFloatingPlatform {
         let mut ids = Vec::new();
         for &nid in &anc_nodes {
             let explicit_id = {
-                let base = self.doc.borrow();
+                let Ok(base) = self.doc.try_borrow() else {
+                    continue;
+                };
                 base.get_node(nid)
                     .and_then(|n| n.element_data())
                     .and_then(|el| el.id.as_ref())
@@ -424,28 +438,39 @@ impl Platform<NodeId, ()> for NativeFloatingPlatform {
             Boundary::Document => Boundary::Document,
             Boundary::Custom(r) => Boundary::Custom(r),
             Boundary::Element(nid) => {
-                let base = self.doc.borrow();
-                let id = base
-                    .get_node(nid)
-                    .and_then(|n| n.element_data())
-                    .and_then(|e| e.id.as_ref().map(|id| id.to_string()))
-                    .unwrap_or_default();
-                Boundary::Element(id)
-            }
-            Boundary::Elements(nids) => {
-                let base = self.doc.borrow();
-                let ids = nids
-                    .into_iter()
-                    .filter_map(|nid| {
+                let id = self
+                    .doc
+                    .try_borrow()
+                    .ok()
+                    .and_then(|base| {
                         base.get_node(nid)
                             .and_then(|n| n.element_data())
                             .and_then(|e| e.id.as_ref().map(|id| id.to_string()))
                     })
-                    .collect();
+                    .unwrap_or_default();
+                Boundary::Element(id)
+            }
+            Boundary::Elements(nids) => {
+                let ids = self
+                    .doc
+                    .try_borrow()
+                    .ok()
+                    .map(|base| {
+                        nids.into_iter()
+                            .filter_map(|nid| {
+                                base.get_node(nid)
+                                    .and_then(|n| n.element_data())
+                                    .and_then(|e| e.id.as_ref().map(|id| id.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 Boundary::Elements(ids)
             }
         };
-        let base = self.doc.borrow();
+        let Ok(base) = self.doc.try_borrow() else {
+            return Rect::default();
+        };
         get_clipping_rect_for_node(&base, *args.element, boundary).unwrap_or_default()
     }
 
