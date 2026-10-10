@@ -99,7 +99,24 @@ impl Document {
         let borrowed = base.try_borrow().ok()?;
         let node_id = borrowed
             .get_element_by_id(id)
-            .or_else(|| borrowed.query_selector(&format!("#{id}")).ok().flatten())?;
+            .or_else(|| borrowed.query_selector(&format!("#{id}")).ok().flatten())
+            .or_else(|| {
+                let mut stack = vec![borrowed.root_node().id];
+                while let Some(nid) = stack.pop() {
+                    if let Some(node) = borrowed.get_node(nid) {
+                        if let Some(el) = node.element_data() {
+                            if el.id.as_deref() == Some(id) {
+                                return Some(nid);
+                            }
+                        }
+                        if node.attr(blitz_dom::local_name!("id")) == Some(id) {
+                            return Some(nid);
+                        }
+                        stack.extend(node.children.iter().rev().copied());
+                    }
+                }
+                None
+            })?;
         Some(crate::dom::element::Element::from_native(
             base.clone(),
             node_id,

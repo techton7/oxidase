@@ -232,6 +232,20 @@ impl NativeFloatingPlatform {
         if let Ok(Some(node_id)) = base.query_selector(&format!("#{id}")) {
             return Some(node_id);
         }
+        let mut stack = vec![base.root_node().id];
+        while let Some(nid) = stack.pop() {
+            if let Some(node) = base.get_node(nid) {
+                if let Some(el) = node.element_data() {
+                    if el.id.as_deref() == Some(id) {
+                        return Some(nid);
+                    }
+                }
+                if node.attr(blitz_dom::local_name!("id")) == Some(id) {
+                    return Some(nid);
+                }
+                stack.extend(node.children.iter().rev().copied());
+            }
+        }
         self.generated_nodes.borrow().get(id).copied()
     }
 
