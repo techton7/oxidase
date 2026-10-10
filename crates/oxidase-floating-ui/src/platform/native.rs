@@ -229,6 +229,9 @@ impl NativeFloatingPlatform {
         if let Some(node_id) = base.get_element_by_id(id) {
             return Some(node_id);
         }
+        if let Ok(Some(node_id)) = base.query_selector(&format!("#{id}")) {
+            return Some(node_id);
+        }
         self.generated_nodes.borrow().get(id).copied()
     }
 

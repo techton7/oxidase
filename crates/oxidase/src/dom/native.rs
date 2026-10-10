@@ -96,7 +96,10 @@ impl Document {
     /// Returns the element with the specified ID if present in the active document.
     pub fn element_by_id(&self, id: &str) -> Option<crate::dom::element::Element> {
         let base = self.inner.as_ref()?;
-        let node_id = base.try_borrow().ok()?.get_element_by_id(id)?;
+        let borrowed = base.try_borrow().ok()?;
+        let node_id = borrowed
+            .get_element_by_id(id)
+            .or_else(|| borrowed.query_selector(&format!("#{id}")).ok().flatten())?;
         Some(crate::dom::element::Element::from_native(
             base.clone(),
             node_id,
@@ -455,6 +458,7 @@ impl Document {
         let base = base.borrow();
         let root_node_id = base
             .get_element_by_id(root_id)
+            .or_else(|| base.query_selector(&format!("#{root_id}")).ok().flatten())
             .ok_or_else(|| crate::error::HostError::ElementNotFound(root_id.to_string()))?;
 
         use std::collections::HashSet;
