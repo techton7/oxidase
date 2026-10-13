@@ -96,15 +96,33 @@ impl<T> RpcResponse<T> {
 /// 구독 이벤트 스트림의 생명주기를 전역으로 자동 중단하지는 않습니다. (개별 감시자 정리는 `WatcherGuard`의 Drop을 통해 수행됩니다.)
 pub fn clear_js_cache() {
     internal::GLOBAL_EPOCH.fetch_add(1, Ordering::SeqCst);
-    let _ = std::panic::catch_unwind(|| {
-        let _ = dioxus::document::eval(
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = js_sys::eval(
             r#"
             if (typeof window !== "undefined" && window.__OXIDASE__?.modules) {
                 window.__OXIDASE__.modules = {};
             }
             "#,
         );
-    });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(rt) = dioxus::core::Runtime::try_current() {
+            let scope = rt.try_current_scope_id().unwrap_or(dioxus::core::ScopeId::ROOT);
+            rt.in_scope(scope, || {
+                let _ = std::panic::catch_unwind(|| {
+                    let _ = dioxus::document::eval(
+                        r#"
+                        if (typeof window !== "undefined" && window.__OXIDASE__?.modules) {
+                            window.__OXIDASE__.modules = {};
+                        }
+                        "#,
+                    );
+                });
+            });
+        }
+    }
 }
 
 /// 하위 호환성을 위한 레거시 별칭 (대신 [`clear_js_cache`] 사용 권장)
@@ -138,11 +156,9 @@ pub mod internal {
     }
 
     pub fn dispatch_cleanup(sub_id: u64) {
-        if dioxus::core::Runtime::try_current().is_none() {
-            return;
-        }
-        let _ = std::panic::catch_unwind(|| {
-            let _ = dioxus::document::eval(&format!(
+        #[cfg(target_arch = "wasm32")]
+        {
+            let script = format!(
                 r#"
                 (function() {{
                     const c = window.__OXIDASE__?.watchers?.get({sub_id});
@@ -152,8 +168,43 @@ pub mod internal {
                     }}
                 }})();
                 "#
-            ));
-        });
+            );
+            let _ = js_sys::eval(&script);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(rt) = dioxus::core::Runtime::try_current() {
+                let scope = rt.try_current_scope_id().unwrap_or(dioxus::core::ScopeId::ROOT);
+                rt.in_scope(scope, || {
+                    let _ = std::panic::catch_unwind(|| {
+                        let _ = dioxus::document::eval(&format!(
+                            r#"
+                            (function() {{
+                                const c = window.__OXIDASE__?.watchers?.get({sub_id});
+                                if (c) {{
+                                    try {{ c(); }} catch(e) {{ console.error("[oxidase Watcher Cleanup Error]:", e); }}
+                                    window.__OXIDASE__?.watchers?.delete({sub_id});
+                                }}
+                            }})();
+                            "#
+                        ));
+                    });
+                });
+            }
+        }
+    }
+
+    /// Safely spawns an asynchronous task onto the Dioxus runtime.
+    ///
+    /// If an active component render scope exists on the stack, the task is attached to it.
+    /// If a runtime exists but no component scope is on the stack (e.g. from an observer callback),
+    /// the task is safely spawned on `ScopeId::ROOT`.
+    /// Returns `None` only if no Dioxus runtime is active.
+    pub fn safe_spawn(fut: impl std::future::Future<Output = ()> + 'static) -> Option<::dioxus::core::Task> {
+        dioxus::core::Runtime::try_current().map(|rt| {
+            let scope = rt.try_current_scope_id().unwrap_or(dioxus::core::ScopeId::ROOT);
+            rt.spawn(scope, fut)
+        })
     }
 }
 
@@ -245,5 +296,11 @@ mod tests {
         assert!(debug_str.contains("42"));
         // Drop test outside runtime - must not panic
         drop(guard);
+    }
+
+    #[test]
+    fn test_safe_spawn_outside_runtime() {
+        let task = internal::safe_spawn(async {});
+        assert!(task.is_none());
     }
 }

@@ -362,7 +362,7 @@ impl WebFloatingPlatform {
     pub fn get_element_rects(&self, reference_id: &str, floating_id: &str) -> Result<ElementRects> {
         let reference = get_element_by_id(reference_id)?;
         let floating = get_element_by_id(floating_id)?;
-        get_element_rects(&reference, &floating, Strategy::Absolute)
+        get_element_rects(&reference, &floating, Strategy::Fixed)
     }
 
     /// Computes the visible clipping boundary rect for an element constrained by boundary rules.
@@ -507,12 +507,19 @@ impl Platform<String, ()> for WebFloatingPlatform {
                 };
             }
         };
-        FloatingPlatform::get_element_rects(self, ref_id, args.floating).unwrap_or_else(|_| {
-            ElementRects {
-                reference: Rect::default(),
-                floating: Rect::default(),
-            }
-        })
+        let default_rects = || ElementRects {
+            reference: Rect::default(),
+            floating: Rect::default(),
+        };
+        let reference = match get_element_by_id(ref_id) {
+            Ok(r) => r,
+            Err(_) => return default_rects(),
+        };
+        let floating = match get_element_by_id(args.floating) {
+            Ok(f) => f,
+            Err(_) => return default_rects(),
+        };
+        get_element_rects(&reference, &floating, args.strategy).unwrap_or_else(|_| default_rects())
     }
 
     fn get_clipping_rect(&self, args: GetClippingRectArgs<String>) -> Rect {

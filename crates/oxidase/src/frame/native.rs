@@ -158,7 +158,9 @@ pub fn request_next_frame(
         let cancel_cb = callback.clone();
         Ok(FrameRequestGuard::new(move || {
             cancel_active.set(false);
-            let _ = cancel_cb.borrow_mut().take();
+            if let Ok(mut cb) = cancel_cb.try_borrow_mut() {
+                let _ = cb.take();
+            }
             FRAME_STATE.with(|inner| {
                 if let Ok(mut s) = inner.try_borrow_mut() {
                     s.one_shot_requests.remove(&id);
@@ -272,7 +274,8 @@ pub fn tick(dt: Duration) {
     // 1. Dispatch one-shots
     for (_, req) in one_shots {
         if req.active.get() {
-            if let Some(cb) = req.callback.borrow_mut().take() {
+            let cb_opt = req.callback.borrow_mut().take();
+            if let Some(cb) = cb_opt {
                 cb(info);
             }
         }

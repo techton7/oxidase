@@ -290,7 +290,8 @@ pub(crate) fn observe_transition_lifecycle(
     if let Some(ref el) = target_el {
         let cb_end = cb_cell.clone();
         let on_end = Closure::<dyn FnMut(web_sys::AnimationEvent)>::new(move |event: web_sys::AnimationEvent| {
-            if let Some(mut cb) = cb_end.borrow_mut().take() {
+            let cb = cb_end.borrow_mut().take();
+            if let Some(mut cb) = cb {
                 cb(crate::dom::observer::TransitionLifecycleEvent::AnimationEnd {
                     animation_name: event.animation_name(),
                 });
@@ -302,7 +303,8 @@ pub(crate) fn observe_transition_lifecycle(
 
         let cb_cancel = cb_cell.clone();
         let on_cancel = Closure::<dyn FnMut(web_sys::AnimationEvent)>::new(move |event: web_sys::AnimationEvent| {
-            if let Some(mut cb) = cb_cancel.borrow_mut().take() {
+            let cb = cb_cancel.borrow_mut().take();
+            if let Some(mut cb) = cb {
                 cb(crate::dom::observer::TransitionLifecycleEvent::AnimationCancel {
                     animation_name: event.animation_name(),
                 });
@@ -313,13 +315,14 @@ pub(crate) fn observe_transition_lifecycle(
     }
 
     let cb_timeout = cb_cell.clone();
-    let task = if fallback_timeout_ms > 0 && dioxus::core::Runtime::try_current().is_some() {
-        Some(dioxus::prelude::spawn(async move {
+    let task = if fallback_timeout_ms > 0 {
+        crate::internal::safe_spawn(async move {
             futures_timer::Delay::new(std::time::Duration::from_millis(fallback_timeout_ms)).await;
-            if let Some(mut cb) = cb_timeout.borrow_mut().take() {
+            let cb = cb_timeout.borrow_mut().take();
+            if let Some(mut cb) = cb {
                 cb(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
             }
-        }))
+        })
     } else {
         None
     };
@@ -335,7 +338,9 @@ pub(crate) fn observe_transition_lifecycle(
             if let Some((target, handler)) = anim_cancel_handler {
                 let _ = target.remove_event_listener_with_callback("animationcancel", handler.as_ref().unchecked_ref());
             }
-            cb_cell.borrow_mut().take();
+            if let Ok(mut cell) = cb_cell.try_borrow_mut() {
+                cell.take();
+            }
         },
     ))
 }

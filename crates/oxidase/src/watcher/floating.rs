@@ -8,7 +8,115 @@ use crate::watcher_guard::WatcherGuard;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn now_ms() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or_else(|| js_sys::Date::now())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static PROCESS_START: std::sync::LazyLock<std::time::Instant> =
+    std::sync::LazyLock::new(std::time::Instant::now);
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn now_ms() -> f64 {
+    PROCESS_START.elapsed().as_secs_f64() * 1000.0
+}
+
+struct CoalesceState {
+    last_emit_ms: Option<f64>,
+    frame_window_ms: f64,
+    is_emitting: bool,
+    pending_trailing: Option<FloatingAutoUpdateEvent>,
+    trailing_guard: Option<crate::frame::FrameRequestGuard>,
+    cancelled: bool,
+}
+
+#[inline]
+fn merge_event(existing: &mut Option<FloatingAutoUpdateEvent>, incoming: FloatingAutoUpdateEvent) {
+    match existing {
+        Some(FloatingAutoUpdateEvent::Update) => {}
+        _ => *existing = Some(incoming),
+    }
+}
+
+struct EmittingGuard {
+    state: Rc<RefCell<CoalesceState>>,
+}
+
+impl Drop for EmittingGuard {
+    fn drop(&mut self) {
+        if let Ok(mut s) = self.state.try_borrow_mut() {
+            s.is_emitting = false;
+        }
+    }
+}
+
+fn schedule_trailing_frame(
+    state: &Rc<RefCell<CoalesceState>>,
+    handler: &Rc<RefCell<dyn FnMut(FloatingAutoUpdateEvent)>>,
+) {
+    let state_weak = Rc::downgrade(state);
+    let handler_weak = Rc::downgrade(handler);
+
+    let guard = match crate::frame::request_next_frame(move |_frame_info| {
+        let Some(state_rc) = state_weak.upgrade() else {
+            return;
+        };
+        let Some(handler_rc) = handler_weak.upgrade() else {
+            return;
+        };
+
+        let now = now_ms();
+        let trailing_event = {
+            let mut s = state_rc.borrow_mut();
+            if s.cancelled {
+                s.trailing_guard = None;
+                s.pending_trailing = None;
+                return;
+            }
+            s.trailing_guard = None;
+            let Some(event) = s.pending_trailing.take() else {
+                return;
+            };
+            s.last_emit_ms = Some(now);
+            s.is_emitting = true;
+            event
+        };
+
+        {
+            let _guard = EmittingGuard {
+                state: state_rc.clone(),
+            };
+            if let Ok(mut h) = handler_rc.try_borrow_mut() {
+                h(trailing_event);
+            }
+        }
+
+        let s = state_rc.borrow_mut();
+        if !s.cancelled && s.pending_trailing.is_some() && s.trailing_guard.is_none() {
+            drop(s);
+            schedule_trailing_frame(&state_rc, &handler_rc);
+        }
+    }) {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::warn!("Failed to schedule trailing frame for floating auto-update: {:?}", e);
+            return;
+        }
+    };
+
+    let mut s = state.borrow_mut();
+    if s.cancelled {
+        drop(guard);
+    } else {
+        s.trailing_guard = Some(guard);
+    }
+}
 
 /// Notification payload for floating auto-update events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,38 +210,67 @@ pub fn watch_floating_auto_update(
 /// Watches floating element updates with explicit options.
 pub fn watch_floating_auto_update_with_options(
     options: FloatingAutoUpdateOptions,
-    mut on_event: impl FnMut(FloatingAutoUpdateEvent) + 'static,
+    on_event: impl FnMut(FloatingAutoUpdateEvent) + 'static,
 ) -> Result<WatcherGuard> {
     let sub_id = crate::internal::next_subscription_id();
 
-    struct CoalesceState {
-        last_emit: Option<Instant>,
-        frame_window: Duration,
-    }
-
     let state = Rc::new(RefCell::new(CoalesceState {
-        last_emit: None,
-        frame_window: Duration::from_millis(16),
+        last_emit_ms: None,
+        frame_window_ms: 16.0,
+        is_emitting: false,
+        pending_trailing: None,
+        trailing_guard: None,
+        cancelled: false,
     }));
 
+    let handler: Rc<RefCell<dyn FnMut(FloatingAutoUpdateEvent)>> = Rc::new(RefCell::new(on_event));
     let mut inner_guards = Vec::new();
 
     let emit_throttled = {
         let state = state.clone();
-        Rc::new(RefCell::new(move |kind: FloatingAutoUpdateEvent| {
-            let mut s = state.borrow_mut();
-            let now = Instant::now();
-            let should_emit = match s.last_emit {
-                Some(last) => now.duration_since(last) >= s.frame_window,
-                None => true,
-            };
+        let handler = handler.clone();
+        Rc::new(move |kind: FloatingAutoUpdateEvent| {
+            let now = now_ms();
+            {
+                let mut s = state.borrow_mut();
+                if s.cancelled {
+                    return;
+                }
 
-            if should_emit {
-                s.last_emit = Some(now);
-                drop(s);
-                on_event(kind);
+                let throttled = s.is_emitting
+                    || match s.last_emit_ms {
+                        Some(last) => (now - last) < s.frame_window_ms,
+                        None => false,
+                    };
+
+                if throttled {
+                    merge_event(&mut s.pending_trailing, kind);
+                    if s.trailing_guard.is_none() {
+                        drop(s);
+                        schedule_trailing_frame(&state, &handler);
+                    }
+                    return;
+                }
+
+                s.last_emit_ms = Some(now);
+                s.is_emitting = true;
             }
-        }))
+
+            {
+                let _guard = EmittingGuard {
+                    state: state.clone(),
+                };
+                if let Ok(mut h) = handler.try_borrow_mut() {
+                    h(kind);
+                }
+            }
+
+            let s = state.borrow_mut();
+            if !s.cancelled && s.pending_trailing.is_some() && s.trailing_guard.is_none() {
+                drop(s);
+                schedule_trailing_frame(&state, &handler);
+            }
+        })
     };
 
     // 1. Ancestor scroll observation
@@ -165,7 +302,7 @@ pub fn watch_floating_auto_update_with_options(
         // Register global viewport scroll observer
         let emit = emit_throttled.clone();
         let scroll_guard = observe_scroll(move || {
-            emit.borrow_mut()(FloatingAutoUpdateEvent::Scroll);
+            emit(FloatingAutoUpdateEvent::Scroll);
         })?;
         inner_guards.push(scroll_guard);
 
@@ -173,7 +310,7 @@ pub fn watch_floating_auto_update_with_options(
         for anc_id in &deduplicated_ancestor_ids {
             let emit = emit_throttled.clone();
             let el_scroll_guard = observe_element_scroll(anc_id, move || {
-                emit.borrow_mut()(FloatingAutoUpdateEvent::Scroll);
+                emit(FloatingAutoUpdateEvent::Scroll);
             })?;
             inner_guards.push(el_scroll_guard);
         }
@@ -185,7 +322,7 @@ pub fn watch_floating_auto_update_with_options(
         for anchor_id in &options.anchor_ids {
             let emit = emit_throttled.clone();
             let guard = observe_element_resize(anchor_id, move |_entry: ResizeEntry| {
-                emit.borrow_mut()(FloatingAutoUpdateEvent::Update);
+                emit(FloatingAutoUpdateEvent::Update);
             })?;
             inner_guards.push(guard);
         }
@@ -193,7 +330,7 @@ pub fn watch_floating_auto_update_with_options(
         // Register content resize observer (tolerate missing content)
         let emit = emit_throttled.clone();
         match observe_element_resize(&options.content_id, move |_entry: ResizeEntry| {
-            emit.borrow_mut()(FloatingAutoUpdateEvent::Update);
+            emit(FloatingAutoUpdateEvent::Update);
         }) {
             Ok(guard) => inner_guards.push(guard),
             Err(crate::error::Error::ElementNotFound(_)) => {}
@@ -206,7 +343,7 @@ pub fn watch_floating_auto_update_with_options(
         for anc_id in &deduplicated_ancestor_ids {
             let emit = emit_throttled.clone();
             if let Ok(guard) = observe_element_resize(anc_id, move |_entry: ResizeEntry| {
-                emit.borrow_mut()(FloatingAutoUpdateEvent::Update);
+                emit(FloatingAutoUpdateEvent::Update);
             }) {
                 inner_guards.push(guard);
             }
@@ -214,14 +351,70 @@ pub fn watch_floating_auto_update_with_options(
     }
 
     // 4. Return combined WatcherGuard collecting all inner guards
+    let state_teardown = state.clone();
     Ok(WatcherGuard::with_cleanup(
         "watch_floating_auto_update",
         sub_id,
         None,
         move || {
+            {
+                let mut s = state_teardown.borrow_mut();
+                s.cancelled = true;
+                s.trailing_guard.take();
+                s.pending_trailing = None;
+            }
             for guard in inner_guards {
                 guard.stop();
             }
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_monotonic_clock_progression() {
+        let t1 = now_ms();
+        assert!(t1 >= 0.0);
+    }
+
+    #[test]
+    fn test_event_merge_semantics_update_dominates_scroll() {
+        let mut evt = None;
+        merge_event(&mut evt, FloatingAutoUpdateEvent::Scroll);
+        assert_eq!(evt, Some(FloatingAutoUpdateEvent::Scroll));
+
+        merge_event(&mut evt, FloatingAutoUpdateEvent::Update);
+        assert_eq!(evt, Some(FloatingAutoUpdateEvent::Update));
+
+        // Update dominates subsequent Scroll
+        merge_event(&mut evt, FloatingAutoUpdateEvent::Scroll);
+        assert_eq!(evt, Some(FloatingAutoUpdateEvent::Update));
+
+        // Update with Update remains Update
+        merge_event(&mut evt, FloatingAutoUpdateEvent::Update);
+        assert_eq!(evt, Some(FloatingAutoUpdateEvent::Update));
+    }
+
+    #[test]
+    fn test_emitting_guard_drop_resets_flag() {
+        let state = Rc::new(RefCell::new(CoalesceState {
+            last_emit_ms: None,
+            frame_window_ms: 16.0,
+            is_emitting: true,
+            pending_trailing: None,
+            trailing_guard: None,
+            cancelled: false,
+        }));
+
+        {
+            let _guard = EmittingGuard {
+                state: state.clone(),
+            };
+            assert!(state.borrow().is_emitting);
+        }
+        assert!(!state.borrow().is_emitting);
+    }
 }

@@ -117,7 +117,8 @@ pub fn request_next_frame(
             delta: Duration::from_secs_f64(dt_ms / 1000.0),
         };
 
-        if let Some(cb) = on_frame_cell.borrow_mut().take() {
+        let cb_opt = on_frame_cell.borrow_mut().take();
+        if let Some(cb) = cb_opt {
             cb(info);
         }
     }) as Box<dyn FnMut(f64)>));
@@ -136,13 +137,19 @@ pub fn request_next_frame(
     let cancel_cb = on_frame_opt.clone();
 
     Ok(FrameRequestGuard::new(move || {
-        let _ = cancel_cb.borrow_mut().take();
-        if let Some(id) = cancel_raf_id.borrow_mut().take() {
-            if let Some(w) = web_sys::window() {
-                let _ = w.cancel_animation_frame(id);
+        if let Ok(mut c) = cancel_cb.try_borrow_mut() {
+            c.take();
+        }
+        if let Ok(mut r) = cancel_raf_id.try_borrow_mut() {
+            if let Some(id) = r.take() {
+                if let Some(w) = web_sys::window() {
+                    let _ = w.cancel_animation_frame(id);
+                }
             }
         }
-        let _ = cancel_closure.borrow_mut().take();
+        if let Ok(mut cl) = cancel_closure.try_borrow_mut() {
+            cl.take();
+        }
     }))
 }
 

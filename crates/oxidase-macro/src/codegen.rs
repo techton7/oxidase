@@ -301,7 +301,7 @@ fn generate_watcher(
 
             let mut eval = ::dioxus::document::eval(&script);
 
-            let task = ::dioxus::prelude::spawn(async move {
+            let task = ::oxidase::internal::safe_spawn(async move {
                 while let Ok(event) = eval.recv::<::oxidase::serde_json::Value>().await {
                     if event.get("__bindgen_err").and_then(|v| v.as_str()) == Some("MODULE_NOT_FOUND") {
                         #epoch_ident.store(0, ::std::sync::atomic::Ordering::Release);
@@ -323,7 +323,15 @@ fn generate_watcher(
                 }
             });
 
-            ::oxidase::WatcherGuard::new(stringify!(#rust_name_ident), sub_id, Some(task))
+            if task.is_none() {
+                ::oxidase::tracing::error!(
+                    target: "oxidase",
+                    "Cannot spawn background watcher task for '{}': no active Dioxus runtime found",
+                    #js_name
+                );
+            }
+
+            ::oxidase::WatcherGuard::new(#js_name, sub_id, task)
         }
     }
 }

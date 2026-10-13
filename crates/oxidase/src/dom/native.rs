@@ -278,28 +278,64 @@ impl Document {
 
     /// Evaluates all registered resize observers and fires callbacks for elements whose layout changed.
     pub fn notify_layout_observers(&self) {
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            for obs in reg.resize_observers.values_mut() {
-                if let Some(rect) = self.measure_rect(&obs.target_id) {
-                    let changed = if let Some(last) = &obs.last_rect {
-                        (last.width - rect.width).abs() > 0.001
-                            || (last.height - rect.height).abs() > 0.001
-                            || (last.x - rect.x).abs() > 0.001
-                            || (last.y - rect.y).abs() > 0.001
-                    } else {
-                        true
-                    };
-                    if changed {
-                        obs.last_rect = Some(rect.clone());
-                        (obs.callback)(crate::dom::observer::ResizeEntry {
-                            target_id: obs.target_id.clone(),
-                            content_rect: rect,
-                        });
+        let is_running = IS_NOTIFYING_LAYOUT.with(|c| c.get());
+        if is_running {
+            NEEDS_RE_EVALUATION.with(|c| c.set(true));
+            return;
+        }
+
+        IS_NOTIFYING_LAYOUT.with(|c| c.set(true));
+        struct NotifyingGuard;
+        impl Drop for NotifyingGuard {
+            fn drop(&mut self) {
+                IS_NOTIFYING_LAYOUT.with(|c| c.set(false));
+            }
+        }
+        let _guard = NotifyingGuard;
+
+        loop {
+            NEEDS_RE_EVALUATION.with(|c| c.set(false));
+
+            let callbacks = CURRENT_OBSERVERS.with(|cell| {
+                let Ok(mut reg) = cell.try_borrow_mut() else {
+                    return Vec::new();
+                };
+                let mut pending = Vec::new();
+                for obs in reg.resize_observers.values_mut() {
+                    if let Some(rect) = self.measure_rect(&obs.target_id) {
+                        let changed = if let Some(last) = &obs.last_rect {
+                            (last.width - rect.width).abs() > 0.001
+                                || (last.height - rect.height).abs() > 0.001
+                                || (last.x - rect.x).abs() > 0.001
+                                || (last.y - rect.y).abs() > 0.001
+                        } else {
+                            true
+                        };
+                        if changed {
+                            obs.last_rect = Some(rect.clone());
+                            pending.push((
+                                obs.callback.clone(),
+                                crate::dom::observer::ResizeEntry {
+                                    target_id: obs.target_id.clone(),
+                                    content_rect: rect,
+                                },
+                            ));
+                        }
                     }
                 }
+                pending
+            });
+
+            for (cb, entry) in callbacks {
+                if let Ok(mut h) = cb.try_borrow_mut() {
+                    h(entry);
+                }
             }
-        });
+
+            if !NEEDS_RE_EVALUATION.with(|c| c.get()) {
+                break;
+            }
+        }
     }
 
     /// Resolves the ancestor hierarchy of element IDs from target up to the document root.
@@ -335,12 +371,17 @@ impl Document {
             target_id,
             path_ids,
         };
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            for cb in reg.capture_observers.values_mut() {
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.capture_observers.values().cloned().collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
                 cb(event.clone());
             }
-        });
+        }
     }
 
     /// Intercepts and dispatches a global capture-phase event to all active capture observers before default target handling.
@@ -355,42 +396,30 @@ impl Document {
 
     /// Dispatches an animation completion signal to registered transition observers.
     pub fn dispatch_animation_end(&self, element_id: &str, animation_name: &str) {
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            for obs in reg.transition_observers.values_mut() {
-                if obs.target_id == element_id {
-                    (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::AnimationEnd {
-                        animation_name: animation_name.to_string(),
-                    });
-                }
-            }
-        });
+        let observers = take_transition_observers(element_id);
+        for mut obs in observers {
+            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::AnimationEnd {
+                animation_name: animation_name.to_string(),
+            });
+        }
     }
 
     /// Dispatches an animation cancellation signal to registered transition observers.
     pub fn dispatch_animation_cancel(&self, element_id: &str, animation_name: &str) {
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            for obs in reg.transition_observers.values_mut() {
-                if obs.target_id == element_id {
-                    (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::AnimationCancel {
-                        animation_name: animation_name.to_string(),
-                    });
-                }
-            }
-        });
+        let observers = take_transition_observers(element_id);
+        for mut obs in observers {
+            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::AnimationCancel {
+                animation_name: animation_name.to_string(),
+            });
+        }
     }
 
     /// Dispatches a timeout fallback signal to registered transition observers.
     pub fn dispatch_transition_fallback(&self, element_id: &str) {
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            for obs in reg.transition_observers.values_mut() {
-                if obs.target_id == element_id {
-                    (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
-                }
-            }
-        });
+        let observers = take_transition_observers(element_id);
+        for mut obs in observers {
+            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
+        }
     }
 
     /// Dispatches a form reset signal to registered form reset observers.
@@ -398,48 +427,72 @@ impl Document {
         let Some(base) = &self.inner else {
             return;
         };
-        let base = base.borrow();
-        let form_node_id = base.get_element_by_id(form_element_id);
+        let Ok(base_ref) = base.try_borrow() else {
+            return;
+        };
+        let form_node_id = base_ref.get_element_by_id(form_element_id);
 
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            for obs in reg.form_reset_observers.values_mut() {
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            let mut matching = Vec::new();
+            for obs in reg.form_reset_observers.values() {
                 if let Some(expected_form_id) = &obs.form_id {
                     if expected_form_id == form_element_id {
-                        (obs.callback)();
+                        matching.push(obs.callback.clone());
                     }
                 } else if let Some(fnid) = form_node_id {
-                    if let Some(el_nid) = base.get_element_by_id(&obs.element_id) {
-                        let chain = base.node_chain(el_nid);
+                    if let Some(el_nid) = base_ref.get_element_by_id(&obs.element_id) {
+                        let chain = base_ref.node_chain(el_nid);
                         if chain.contains(&fnid) {
-                            (obs.callback)();
+                            matching.push(obs.callback.clone());
                         }
                     }
                 }
             }
+            matching
         });
+        drop(base_ref);
+
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb();
+            }
+        }
     }
 
     /// Dispatches a scroll event to all registered scroll observers.
     pub fn dispatch_scroll(&self) {
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            for cb in reg.scroll_observers.values_mut() {
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.scroll_observers.values().cloned().collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
                 cb();
             }
-        });
+        }
     }
 
     /// Dispatches an element scroll event to all registered observers for the element ID.
     pub fn dispatch_element_scroll(&self, element_id: &str) {
-        CURRENT_OBSERVERS.with(|cell| {
-            let mut reg = cell.borrow_mut();
-            if let Some(observers) = reg.element_scroll_observers.get_mut(element_id) {
-                for (_, cb) in observers.iter_mut() {
-                    cb();
-                }
-            }
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.element_scroll_observers
+                .get(element_id)
+                .map(|observers| observers.iter().map(|(_, cb)| cb.clone()).collect::<Vec<_>>())
+                .unwrap_or_default()
         });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb();
+            }
+        }
     }
 
     /// Dispatches an element scroll event by looking up the element's DOM ID from its `NodeId`.
@@ -518,12 +571,14 @@ impl Document {
 std::thread_local! {
     static CURRENT_NATIVE_DOC: RefCell<Option<Document>> = const { RefCell::new(None) };
     static CURRENT_OBSERVERS: RefCell<NativeObserverRegistry> = RefCell::new(NativeObserverRegistry::default());
+    static IS_NOTIFYING_LAYOUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static NEEDS_RE_EVALUATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 struct ResizeObserverEntry {
     target_id: String,
     last_rect: Option<crate::runtime::geometry::Rect>,
-    callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry)>,
+    callback: Rc<RefCell<Box<dyn FnMut(crate::dom::observer::ResizeEntry)>>>,
 }
 
 struct TransitionObserverEntry {
@@ -534,17 +589,35 @@ struct TransitionObserverEntry {
 struct FormResetObserverEntry {
     element_id: String,
     form_id: Option<String>,
-    callback: Box<dyn FnMut()>,
+    callback: Rc<RefCell<Box<dyn FnMut()>>>,
 }
 
 #[derive(Default)]
 struct NativeObserverRegistry {
     resize_observers: std::collections::HashMap<u64, ResizeObserverEntry>,
-    capture_observers: std::collections::HashMap<u64, Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>,
+    capture_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>>>,
     transition_observers: std::collections::HashMap<u64, TransitionObserverEntry>,
     form_reset_observers: std::collections::HashMap<u64, FormResetObserverEntry>,
-    scroll_observers: std::collections::HashMap<u64, Box<dyn FnMut()>>,
-    element_scroll_observers: std::collections::HashMap<String, Vec<(u64, Box<dyn FnMut()>)>>,
+    scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
+    element_scroll_observers: std::collections::HashMap<String, Vec<(u64, Rc<RefCell<Box<dyn FnMut()>>>)>>,
+}
+
+fn take_transition_observers(element_id: &str) -> Vec<TransitionObserverEntry> {
+    CURRENT_OBSERVERS.with(|cell| {
+        let Ok(mut reg) = cell.try_borrow_mut() else {
+            return Vec::new();
+        };
+        let matching_ids: Vec<u64> = reg
+            .transition_observers
+            .iter()
+            .filter(|(_, obs)| obs.target_id == element_id)
+            .map(|(&id, _)| id)
+            .collect();
+        matching_ids
+            .into_iter()
+            .filter_map(|id| reg.transition_observers.remove(&id))
+            .collect()
+    })
 }
 
 pub(crate) fn observe_element_resize(
@@ -564,7 +637,7 @@ pub(crate) fn observe_element_resize(
             ResizeObserverEntry {
                 target_id: element_id.to_string(),
                 last_rect: initial_rect,
-                callback,
+                callback: Rc::new(RefCell::new(callback)),
             },
         );
     });
@@ -575,7 +648,9 @@ pub(crate) fn observe_element_resize(
         None,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
-                cell.borrow_mut().resize_observers.remove(&sub_id);
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.resize_observers.remove(&sub_id);
+                }
             });
         },
     ))
@@ -586,7 +661,9 @@ pub(crate) fn observe_capture_events(
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     let sub_id = crate::internal::next_subscription_id();
     CURRENT_OBSERVERS.with(|cell| {
-        cell.borrow_mut().capture_observers.insert(sub_id, callback);
+        cell.borrow_mut()
+            .capture_observers
+            .insert(sub_id, Rc::new(RefCell::new(callback)));
     });
 
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
@@ -595,7 +672,9 @@ pub(crate) fn observe_capture_events(
         None,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
-                cell.borrow_mut().capture_observers.remove(&sub_id);
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.capture_observers.remove(&sub_id);
+                }
             });
         },
     ))
@@ -617,16 +696,20 @@ pub(crate) fn observe_transition_lifecycle(
         );
     });
 
-    let task = if fallback_timeout_ms > 0 && dioxus::core::Runtime::try_current().is_some() {
-        Some(dioxus::prelude::spawn(async move {
+    let task = if fallback_timeout_ms > 0 {
+        crate::internal::safe_spawn(async move {
             futures_timer::Delay::new(std::time::Duration::from_millis(fallback_timeout_ms)).await;
             let entry = CURRENT_OBSERVERS.with(|cell| {
-                cell.borrow_mut().transition_observers.remove(&sub_id)
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.transition_observers.remove(&sub_id)
+                } else {
+                    None
+                }
             });
             if let Some(mut obs) = entry {
                 (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
             }
-        }))
+        })
     } else {
         None
     };
@@ -637,7 +720,9 @@ pub(crate) fn observe_transition_lifecycle(
         task,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
-                cell.borrow_mut().transition_observers.remove(&sub_id);
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.transition_observers.remove(&sub_id);
+                }
             });
         },
     ))
@@ -655,7 +740,7 @@ pub(crate) fn observe_form_reset(
             FormResetObserverEntry {
                 element_id: element_id.to_string(),
                 form_id: form_id.map(ToString::to_string),
-                callback,
+                callback: Rc::new(RefCell::new(callback)),
             },
         );
     });
@@ -666,7 +751,9 @@ pub(crate) fn observe_form_reset(
         None,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
-                cell.borrow_mut().form_reset_observers.remove(&sub_id);
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.form_reset_observers.remove(&sub_id);
+                }
             });
         },
     ))
@@ -677,7 +764,9 @@ pub(crate) fn observe_scroll(
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     let sub_id = crate::internal::next_subscription_id();
     CURRENT_OBSERVERS.with(|cell| {
-        cell.borrow_mut().scroll_observers.insert(sub_id, callback);
+        cell.borrow_mut()
+            .scroll_observers
+            .insert(sub_id, Rc::new(RefCell::new(callback)));
     });
 
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
@@ -686,7 +775,9 @@ pub(crate) fn observe_scroll(
         None,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
-                cell.borrow_mut().scroll_observers.remove(&sub_id);
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.scroll_observers.remove(&sub_id);
+                }
             });
         },
     ))
@@ -711,7 +802,7 @@ pub(crate) fn observe_element_scroll(
             .element_scroll_observers
             .entry(el_id)
             .or_default()
-            .push((sub_id, callback));
+            .push((sub_id, Rc::new(RefCell::new(callback))));
     });
 
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
@@ -720,11 +811,12 @@ pub(crate) fn observe_element_scroll(
         None,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
-                let mut reg = cell.borrow_mut();
-                if let Some(observers) = reg.element_scroll_observers.get_mut(&el_id_clone) {
-                    observers.retain(|(id, _)| *id != sub_id);
-                    if observers.is_empty() {
-                        reg.element_scroll_observers.remove(&el_id_clone);
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    if let Some(observers) = reg.element_scroll_observers.get_mut(&el_id_clone) {
+                        observers.retain(|(id, _)| *id != sub_id);
+                        if observers.is_empty() {
+                            reg.element_scroll_observers.remove(&el_id_clone);
+                        }
                     }
                 }
             });
@@ -738,7 +830,9 @@ impl Document {
     /// Used for structural leak verification and teardown validation.
     pub fn element_scroll_observer_count(&self, element_id: Option<&str>) -> usize {
         CURRENT_OBSERVERS.with(|cell| {
-            let reg = cell.borrow();
+            let Ok(reg) = cell.try_borrow() else {
+                return 0;
+            };
             if let Some(id) = element_id {
                 reg.element_scroll_observers.get(id).map_or(0, |list| list.len())
             } else {
