@@ -7544,3 +7544,33 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "blitz-dom"
+version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.4#ab9203248ad50fc4e6f088a1844750fd5319ff02"
+
+[[patch.unused]]
+name = "blitz-paint"
+version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.4#ab9203248ad50fc4e6f088a1844750fd5319ff02"
+
+[[patch.unused]]
+name = "blitz-shell"
+version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.4#ab9203248ad50fc4e6f088a1844750fd5319ff02"
+
+[[patch.unused]]
+name = "blitz-traits"
+version = "0.3.0-beta.2"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.4#ab9203248ad50fc4e6f088a1844750fd5319ff02"
+
+[[patch.unused]]
+name = "dioxus-native"
+version = "0.7.0"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.4#ab9203248ad50fc4e6f088a1844750fd5319ff02"
+
+[[patch.unused]]
+name = "dioxus-native-dom"
+version = "0.7.0"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.2.4#ab9203248ad50fc4e6f088a1844750fd5319ff02"
