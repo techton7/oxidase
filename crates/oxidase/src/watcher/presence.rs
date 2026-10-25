@@ -90,7 +90,10 @@ pub fn watch_presence_with_options(
     let cycle_id = options.cycle_id;
     let sub_id = crate::internal::next_subscription_id();
 
-    // Pre-flight check: if active document exists and element is not in DOM, fall back immediately
+    // Pre-flight check: on web, if active document exists and element is not in DOM, fall back immediately.
+    // On native, ambient BaseDocument context is non-authoritative (separate from live window renderer),
+    // so we must proceed to the lifecycle observer / duration fallback instead of premature unmounting.
+    #[cfg(target_arch = "wasm32")]
     if let Some(doc) = crate::dom::Document::current() {
         if doc.element_by_id(&options.element_id).is_none() {
             on_event(PresenceEvent::Fallback {

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use blitz_dom::CopyStyleGetters;
 use blitz_dom::{BaseDocument, NodeId, QualName, local_name, ns};
 
 use crate::detect_overflow::DetectOverflowOptions;
