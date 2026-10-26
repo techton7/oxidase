@@ -2,6 +2,8 @@
 //!
 //! Unified high-performance JS/TS FFI and browser runtime engine for Dioxus.
 
+#![allow(clippy::type_complexity)]
+
 extern crate self as oxidase;
 
 pub use oxidase_macro::{bind_js, main};

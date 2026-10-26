@@ -33,8 +33,7 @@ fn setup_test_doc(
                     value: format!(
                         "width: {}px; height: {}px; margin: 0; padding: 0; position: relative; display: block;",
                         window_size.0, window_size.1
-                    )
-                    .into(),
+                    ),
                 },
             ],
         );

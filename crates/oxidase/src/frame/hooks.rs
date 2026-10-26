@@ -65,7 +65,7 @@ pub fn use_frame(mut on_frame: impl FnMut(FrameInfo) + 'static) {
 ///
 /// #[component]
 /// fn FadeIn() -> Element {
-
+///
 ///     let mut opacity = use_signal(|| 0.0);
 ///     use_future(move || async move {
 ///         while opacity() < 1.0 {

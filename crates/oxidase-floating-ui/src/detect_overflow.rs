@@ -141,7 +141,7 @@ pub fn detect_overflow<Element: Clone + 'static, Window: Clone + 'static>(
         }));
 
     let rect = match element_context {
-        ElementContext::Reference => rects.reference.clone(),
+        ElementContext::Reference => rects.reference,
         ElementContext::Floating => Rect {
             x,
             y,
@@ -169,7 +169,7 @@ pub fn detect_overflow<Element: Clone + 'static, Window: Clone + 'static>(
                         reference: elements.reference,
                         floating: elements.floating,
                     }),
-                    rect: rect.clone(),
+                    rect,
                     offset_parent: offset_parent
                         .as_ref()
                         .map(|offset_parent| offset_parent.into()),

@@ -39,6 +39,18 @@ pub enum PresenceEvent {
         #[serde(rename = "animationName")]
         animation_name: String,
     },
+    TransitionEnd {
+        #[serde(rename = "cycleId", default)]
+        cycle_id: u64,
+        #[serde(rename = "propertyName")]
+        property_name: String,
+    },
+    TransitionCancel {
+        #[serde(rename = "cycleId", default)]
+        cycle_id: u64,
+        #[serde(rename = "propertyName")]
+        property_name: String,
+    },
     Stopped {
         #[serde(rename = "cycleId", default)]
         cycle_id: u64,
@@ -90,18 +102,17 @@ pub fn watch_presence_with_options(
     let cycle_id = options.cycle_id;
     let sub_id = crate::internal::next_subscription_id();
 
-    // Pre-flight check: on web, if active document exists and element is not in DOM, fall back immediately.
-    // On native, ambient BaseDocument context is non-authoritative (separate from live window renderer),
-    // so we must proceed to the lifecycle observer / duration fallback instead of premature unmounting.
-    #[cfg(target_arch = "wasm32")]
-    if let Some(doc) = crate::dom::Document::current() {
-        if doc.element_by_id(&options.element_id).is_none() {
-            on_event(PresenceEvent::Fallback {
-                cycle_id,
-                reason: PresenceFallbackReason::Missing,
-            });
-            return Ok(WatcherGuard::new("watch_presence_missing", sub_id, None));
-        }
+    // Pre-flight check: if active authoritative document exists and element is not in DOM, fall back immediately.
+    // Non-authoritative ambient BaseDocument contexts proceed to transition lifecycle/fallback without premature unmounting.
+    if let Some(doc) = crate::dom::Document::current()
+        && doc.is_authoritative()
+        && doc.element_by_id(&options.element_id).is_none()
+    {
+        on_event(PresenceEvent::Fallback {
+            cycle_id,
+            reason: PresenceFallbackReason::Missing,
+        });
+        return Ok(WatcherGuard::new("watch_presence_missing", sub_id, None));
     }
 
     let mut finished = false;
@@ -127,6 +138,18 @@ pub fn watch_presence_with_options(
                         animation_name,
                     });
                 }
+                TransitionLifecycleEvent::TransitionEnd { property_name } => {
+                    on_event(PresenceEvent::TransitionEnd {
+                        cycle_id,
+                        property_name,
+                    });
+                }
+                TransitionLifecycleEvent::TransitionCancel { property_name } => {
+                    on_event(PresenceEvent::TransitionCancel {
+                        cycle_id,
+                        property_name,
+                    });
+                }
                 TransitionLifecycleEvent::TimeoutFallback => {
                     on_event(PresenceEvent::Fallback {
                         cycle_id,
@@ -148,4 +171,49 @@ pub fn watch_presence_with_options(
             inner_guard.stop();
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_presence_event_transition_serde() {
+        let ev_end = PresenceEvent::TransitionEnd {
+            cycle_id: 12,
+            property_name: "opacity".to_string(),
+        };
+        let json_end = serde_json::to_string(&ev_end).expect("serialize TransitionEnd");
+        assert_eq!(
+            json_end,
+            r#"{"kind":"transition_end","cycleId":12,"propertyName":"opacity"}"#
+        );
+        let de_end: PresenceEvent = serde_json::from_str(&json_end).expect("deserialize TransitionEnd");
+        assert_eq!(de_end, ev_end);
+
+        let ev_cancel = PresenceEvent::TransitionCancel {
+            cycle_id: 15,
+            property_name: "transform".to_string(),
+        };
+        let json_cancel = serde_json::to_string(&ev_cancel).expect("serialize TransitionCancel");
+        assert_eq!(
+            json_cancel,
+            r#"{"kind":"transition_cancel","cycleId":15,"propertyName":"transform"}"#
+        );
+        let de_cancel: PresenceEvent =
+            serde_json::from_str(&json_cancel).expect("deserialize TransitionCancel");
+        assert_eq!(de_cancel, ev_cancel);
+
+        // Deserialization with missing cycleId defaults to 0
+        let default_cycle_json = r#"{"kind":"transition_end","propertyName":"height"}"#;
+        let de_default: PresenceEvent =
+            serde_json::from_str(default_cycle_json).expect("deserialize with default cycleId");
+        assert_eq!(
+            de_default,
+            PresenceEvent::TransitionEnd {
+                cycle_id: 0,
+                property_name: "height".to_string(),
+            }
+        );
+    }
 }

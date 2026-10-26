@@ -20,6 +20,12 @@ impl Document {
         Self { doc: Some(doc) }
     }
 
+    /// Returns whether this document is authoritative. Always true on web.
+    #[inline]
+    pub fn is_authoritative(&self) -> bool {
+        true
+    }
+
     /// Access the underlying `web_sys::Document`.
     #[inline]
     pub fn raw(&self) -> &web_sys::Document {
@@ -76,10 +82,32 @@ impl Document {
         }
     }
 
+    /// Returns whether any CSS animations are currently active. Always false on web FFI.
+    #[inline]
+    pub fn is_animating(&self) -> bool {
+        false
+    }
+
+    /// Synchronizes hosted observers. No-op on web FFI.
+    #[inline]
+    pub fn pump_hosted_observers(&self) {}
+
     /// Returns the active observer counts for element scroll listeners.
     pub fn element_scroll_observer_count(&self, _element_id: Option<&str>) -> usize {
         0
     }
+
+    /// Dispatches an animation completion signal for testing / host API parity.
+    pub fn dispatch_animation_end(&self, _element_id: &str, _animation_name: &str) {}
+
+    /// Dispatches an animation cancellation signal for testing / host API parity.
+    pub fn dispatch_animation_cancel(&self, _element_id: &str, _animation_name: &str) {}
+
+    /// Dispatches a transition completion signal for testing / host API parity.
+    pub fn dispatch_transition_end(&self, _element_id: &str, _property_name: &str) {}
+
+    /// Dispatches a transition cancellation signal for testing / host API parity.
+    pub fn dispatch_transition_cancel(&self, _element_id: &str, _property_name: &str) {}
 
     /// Queries the descendant tree order of elements matching `candidate_ids` within `root_id`.
     ///
@@ -100,10 +128,10 @@ impl Document {
 
         let mut matched_candidates = Vec::new();
         for &id in candidate_ids {
-            if let Some(el) = doc.get_element_by_id(id) {
-                if root.contains(Some(&el)) {
-                    matched_candidates.push((id.to_string(), el));
-                }
+            if let Some(el) = doc.get_element_by_id(id)
+                && root.contains(Some(&el))
+            {
+                matched_candidates.push((id.to_string(), el));
             }
         }
 
@@ -286,6 +314,8 @@ pub(crate) fn observe_transition_lifecycle(
 
     let mut anim_end_handler = None;
     let mut anim_cancel_handler = None;
+    let mut trans_end_handler = None;
+    let mut trans_cancel_handler = None;
 
     if let Some(ref el) = target_el {
         let cb_end = cb_cell.clone();
@@ -311,7 +341,31 @@ pub(crate) fn observe_transition_lifecycle(
             }
         });
         let _ = target.add_event_listener_with_callback("animationcancel", on_cancel.as_ref().unchecked_ref());
-        anim_cancel_handler = Some((target, on_cancel));
+        anim_cancel_handler = Some((target.clone(), on_cancel));
+
+        let cb_trans_end = cb_cell.clone();
+        let on_trans_end = Closure::<dyn FnMut(web_sys::TransitionEvent)>::new(move |event: web_sys::TransitionEvent| {
+            let cb = cb_trans_end.borrow_mut().take();
+            if let Some(mut cb) = cb {
+                cb(crate::dom::observer::TransitionLifecycleEvent::TransitionEnd {
+                    property_name: event.property_name(),
+                });
+            }
+        });
+        let _ = target.add_event_listener_with_callback("transitionend", on_trans_end.as_ref().unchecked_ref());
+        trans_end_handler = Some((target.clone(), on_trans_end));
+
+        let cb_trans_cancel = cb_cell.clone();
+        let on_trans_cancel = Closure::<dyn FnMut(web_sys::TransitionEvent)>::new(move |event: web_sys::TransitionEvent| {
+            let cb = cb_trans_cancel.borrow_mut().take();
+            if let Some(mut cb) = cb {
+                cb(crate::dom::observer::TransitionLifecycleEvent::TransitionCancel {
+                    property_name: event.property_name(),
+                });
+            }
+        });
+        let _ = target.add_event_listener_with_callback("transitioncancel", on_trans_cancel.as_ref().unchecked_ref());
+        trans_cancel_handler = Some((target, on_trans_cancel));
     }
 
     let cb_timeout = cb_cell.clone();
@@ -337,6 +391,12 @@ pub(crate) fn observe_transition_lifecycle(
             }
             if let Some((target, handler)) = anim_cancel_handler {
                 let _ = target.remove_event_listener_with_callback("animationcancel", handler.as_ref().unchecked_ref());
+            }
+            if let Some((target, handler)) = trans_end_handler {
+                let _ = target.remove_event_listener_with_callback("transitionend", handler.as_ref().unchecked_ref());
+            }
+            if let Some((target, handler)) = trans_cancel_handler {
+                let _ = target.remove_event_listener_with_callback("transitioncancel", handler.as_ref().unchecked_ref());
             }
             if let Ok(mut cell) = cb_cell.try_borrow_mut() {
                 cell.take();

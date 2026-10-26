@@ -199,6 +199,7 @@ fn test_camel_case_renaming_normalizes_to_snake_case() {
 }
 
 #[test]
+#[allow(clippy::let_underscore_future)]
 fn test_array_generic_signatures() {
     // Verify signatures and return types for Array<T> functions
     let _ = async {

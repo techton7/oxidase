@@ -16,11 +16,10 @@ fn is_launch_call(func: &syn::Expr) -> bool {
         if idents == ["dioxus", "launch"] || idents == ["launch"] || idents == ["oxidase", "launch"] {
             return true;
         }
-        if let Some(last) = expr_path.path.segments.last() {
-            if last.ident == "launch" {
+        if let Some(last) = expr_path.path.segments.last()
+            && last.ident == "launch" {
                 return true;
             }
-        }
     }
     false
 }
@@ -91,11 +90,10 @@ fn rewrite_launch_expr(expr: &mut syn::Expr, is_headless: bool) -> bool {
 fn rewrite_stmts(stmts: &mut [syn::Stmt], is_headless: bool) -> bool {
     let mut rewritten = false;
     for stmt in stmts.iter_mut() {
-        if let syn::Stmt::Expr(expr, _semi) = stmt {
-            if rewrite_launch_expr(expr, is_headless) {
+        if let syn::Stmt::Expr(expr, _semi) = stmt
+            && rewrite_launch_expr(expr, is_headless) {
                 rewritten = true;
             }
-        }
     }
     rewritten
 }

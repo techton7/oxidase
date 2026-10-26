@@ -48,6 +48,8 @@ impl CaptureEvent {
 pub enum TransitionLifecycleEvent {
     AnimationEnd { animation_name: String },
     AnimationCancel { animation_name: String },
+    TransitionEnd { property_name: String },
+    TransitionCancel { property_name: String },
     TimeoutFallback,
     Stopped,
 }

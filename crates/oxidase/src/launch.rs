@@ -29,7 +29,11 @@ pub fn ensure_document_context() {
 
         if crate::dom::Document::current().is_none() {
             let base_doc = Rc::new(RefCell::new(BaseDocument::new(DocumentConfig::default())));
-            dioxus::prelude::provide_context(crate::dom::Document::from_base(base_doc));
+            let doc = crate::dom::Document::from_unattached_base(base_doc);
+            if dioxus::core::Runtime::try_current().is_some() {
+                dioxus::prelude::provide_context(doc.clone());
+            }
+            crate::dom::Document::set_current(Some(doc));
         }
         if let Some(doc) = crate::dom::Document::current() {
             doc.provide_context();
@@ -49,22 +53,49 @@ pub fn step_hosted_frame() -> std::time::Duration {
 
 /// Transparent root wrapper component injected by `#[oxidase::main]`.
 ///
-/// When the `blitz-host` feature is enabled on `oxidase`, wraps `children` in
-/// `<blitz_host::BlitzHost>` to automatically capture the live window's `NodeHandle`,
-/// service control requests on `WindowEvent::RedrawRequested`, and handle synthetic actions.
+/// Wraps `children` in a container (`div` with `display: contents;`) to capture the live window's
+/// `NodeHandle` on mount and bind its `BaseDocument` via `Document::bind_live_base`.
 ///
-/// When `blitz-host` is not enabled, renders `children` with zero overhead.
+/// When the `blitz-host` feature is enabled on `oxidase`, additionally wraps in
+/// `<blitz_host::BlitzHost>` to service control requests and synthetic actions.
 #[component]
 pub fn HostedRootWrapper(children: Element) -> Element {
-    #[cfg(feature = "blitz-host")]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     {
-        rsx! {
-            ::blitz_host::BlitzHost {
+        let wrapped_children = rsx! {
+            div {
+                style: "display: contents;",
+                onmounted: move |evt: Event<MountedData>| {
+                    if let Some(handle) = evt.downcast::<dioxus_native::NodeHandle>() {
+                        let base_doc = crate::dom::Document::extract_base_doc(handle);
+                        if let Some(doc) = dioxus::prelude::try_consume_context::<crate::dom::Document>() {
+                            doc.bind_live_base(base_doc.clone());
+                        }
+                        if let Some(doc) = crate::dom::Document::current() {
+                            doc.bind_live_base(base_doc.clone());
+                        } else {
+                            crate::dom::Document::set_current(Some(crate::dom::Document::from_base(base_doc)));
+                        }
+                    }
+                },
                 {children}
             }
+        };
+
+        #[cfg(feature = "blitz-host")]
+        {
+            rsx! {
+                ::blitz_host::BlitzHost {
+                    {wrapped_children}
+                }
+            }
+        }
+        #[cfg(not(feature = "blitz-host"))]
+        {
+            wrapped_children
         }
     }
-    #[cfg(not(feature = "blitz-host"))]
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "native")))]
     {
         children
     }
@@ -113,7 +144,7 @@ pub fn launch(app: fn() -> Element) {
 
         TARGET_APP.with(|c| c.set(Some(app)));
         let base_doc = Rc::new(RefCell::new(BaseDocument::new(DocumentConfig::default())));
-        let doc = crate::dom::Document::from_base(base_doc);
+        let doc = crate::dom::Document::from_unattached_base(base_doc);
 
         crate::dom::Document::with_current(doc, || {
             let mut vdom = VirtualDom::new(native_bootstrap_root);

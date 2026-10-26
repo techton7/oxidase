@@ -1,43 +1,66 @@
 use blitz_dom::BaseDocument;
-use std::cell::RefCell;
+use blitz_traits::events::DomEventData;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// Native Blitz Document handle wrapping the real `BaseDocument`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Document {
-    inner: Option<Rc<RefCell<BaseDocument>>>,
+    inner: Rc<RefCell<Option<Rc<RefCell<BaseDocument>>>>>,
+    pub(crate) authoritative: Rc<Cell<bool>>,
+    pub(crate) last_synced_len: Rc<Cell<usize>>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(None)),
+            authoritative: Rc::new(Cell::new(true)),
+            last_synced_len: Rc::new(Cell::new(0)),
+        }
+    }
 }
 
 impl std::fmt::Debug for Document {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Document");
-        if let Some(base) = &self.inner {
+        if let Some(base) = self.get_base() {
             s.field("document_id", &base.borrow().id());
         } else {
             s.field("active", &false);
         }
+        s.field("authoritative", &self.authoritative.get());
         s.finish()
     }
+}
+
+/// Extracts the underlying `Rc<RefCell<BaseDocument>>` from a `dioxus_native::NodeHandle`.
+pub fn extract_base_doc(handle: &dioxus_native::NodeHandle) -> Rc<RefCell<BaseDocument>> {
+    #[allow(dead_code)]
+    struct NodeHandleLayout {
+        doc: Rc<RefCell<BaseDocument>>,
+        node_id: blitz_dom::NodeId,
+    }
+    let cloned = handle.clone();
+    let repr: NodeHandleLayout = unsafe { std::mem::transmute(cloned) };
+    repr.doc
 }
 
 impl Document {
     /// Returns the active native Blitz document if available in current thread or Dioxus context.
     pub fn current() -> Option<Self> {
         // 1. Check Dioxus root context if running within an active Dioxus runtime
-        if dioxus::core::Runtime::try_current().is_some() {
-            if let Some(doc) = dioxus::prelude::try_consume_context::<Document>() {
-                if doc.inner.is_some() {
+        if dioxus::core::Runtime::try_current().is_some()
+            && let Some(doc) = dioxus::prelude::try_consume_context::<Document>()
+                && doc.get_base().is_some() {
                     return Some(doc);
                 }
-            }
-        }
 
         // 2. Check thread-local (active during harness dispatch or scoped execution in Blitz)
-        if let Some(doc) = CURRENT_NATIVE_DOC.with(|cell| cell.borrow().clone()) {
-            if doc.inner.is_some() {
+        if let Some(doc) = CURRENT_NATIVE_DOC.with(|cell| cell.borrow().clone())
+            && doc.get_base().is_some() {
                 return Some(doc);
             }
-        }
 
         None
     }
@@ -45,18 +68,36 @@ impl Document {
     /// Construct a Document wrapping a real Blitz BaseDocument and wire engine bridges.
     pub fn from_base(inner: Rc<RefCell<BaseDocument>>) -> Self {
         let doc = Self {
-            inner: Some(inner),
+            inner: Rc::new(RefCell::new(Some(inner))),
+            authoritative: Rc::new(Cell::new(true)),
+            last_synced_len: Rc::new(Cell::new(0)),
         };
         doc.attach_engine_bridges();
         doc
+    }
+
+    /// Construct a non-authoritative ambient Document wrapping an unattached Blitz BaseDocument.
+    pub fn from_unattached_base(inner: Rc<RefCell<BaseDocument>>) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(Some(inner))),
+            authoritative: Rc::new(Cell::new(false)),
+            last_synced_len: Rc::new(Cell::new(0)),
+        }
     }
 
     /// Internal constructor without re-attaching engine bridges.
     #[allow(dead_code)]
     pub(crate) fn from_base_raw(inner: Rc<RefCell<BaseDocument>>) -> Self {
         Self {
-            inner: Some(inner),
+            inner: Rc::new(RefCell::new(Some(inner))),
+            authoritative: Rc::new(Cell::new(true)),
+            last_synced_len: Rc::new(Cell::new(0)),
         }
+    }
+
+    /// Returns whether this document is authoritative (true for real rendered or fully constructed documents, false for ambient unattached placeholders).
+    pub fn is_authoritative(&self) -> bool {
+        self.authoritative.get()
     }
 
     /// Wires Blitz engine-level capture events and animation completion signals into the Oxidase observer substrate.
@@ -64,11 +105,37 @@ impl Document {
         // Reserved for Blitz engine-level capture events and animation completion signals.
     }
 
+    /// Binds a live window `BaseDocument` to this document handle in-place.
+    ///
+    /// Upgrades all existing clones of this document handle across component contexts
+    /// and thread-locals, marking the document as authoritative and attaching engine bridges.
+    pub fn bind_live_base(&self, base: Rc<RefCell<BaseDocument>>) {
+        *self.inner.borrow_mut() = Some(base);
+        self.authoritative.set(true);
+        self.attach_engine_bridges();
+    }
+
+    /// Returns whether any CSS animations are currently active on the native Blitz BaseDocument.
+    pub fn is_animating(&self) -> bool {
+        if let Some(base) = self.get_base() {
+            base.borrow().is_animating()
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn get_base(&self) -> Option<Rc<RefCell<BaseDocument>>> {
+        self.inner.borrow().clone()
+    }
+
     /// Access the underlying real `BaseDocument`.
-    pub fn base(&self) -> &Rc<RefCell<BaseDocument>> {
-        self.inner
-            .as_ref()
-            .expect("Document has no active BaseDocument")
+    pub fn base(&self) -> Rc<RefCell<BaseDocument>> {
+        self.get_base().expect("Document has no active BaseDocument")
+    }
+
+    /// Extracts the underlying `Rc<RefCell<BaseDocument>>` from a `dioxus_native::NodeHandle`.
+    pub fn extract_base_doc(handle: &dioxus_native::NodeHandle) -> Rc<RefCell<BaseDocument>> {
+        extract_base_doc(handle)
     }
 
     /// Sets the thread-local active native Document for the duration of a closure.
@@ -90,12 +157,14 @@ impl Document {
 
     /// Provide this Document into the active Dioxus component context.
     pub fn provide_context(self) {
-        dioxus::prelude::provide_context(self);
+        if dioxus::core::Runtime::try_current().is_some() {
+            dioxus::prelude::provide_context(self);
+        }
     }
 
     /// Returns the element with the specified ID if present in the active document.
     pub fn element_by_id(&self, id: &str) -> Option<crate::dom::element::Element> {
-        let base = self.inner.as_ref()?;
+        let base = self.get_base()?;
         let borrowed = base.try_borrow().ok()?;
         let node_id = borrowed
             .get_element_by_id(id)
@@ -104,11 +173,10 @@ impl Document {
                 let mut stack = vec![borrowed.root_node().id];
                 while let Some(nid) = stack.pop() {
                     if let Some(node) = borrowed.get_node(nid) {
-                        if let Some(el) = node.element_data() {
-                            if el.id.as_deref() == Some(id) {
+                        if let Some(el) = node.element_data()
+                            && el.id.as_deref() == Some(id) {
                                 return Some(nid);
                             }
-                        }
                         if node.attr(blitz_dom::local_name!("id")) == Some(id) {
                             return Some(nid);
                         }
@@ -117,18 +185,19 @@ impl Document {
                 }
                 None
             })?;
+        drop(borrowed);
         Some(crate::dom::element::Element::from_native(
-            base.clone(),
+            base,
             node_id,
         ))
     }
 
     /// Returns the element that currently holds active keyboard focus in the document.
     pub fn active_element(&self) -> Option<crate::dom::element::Element> {
-        let base = self.inner.as_ref()?;
+        let base = self.get_base()?;
         let node_id = base.try_borrow().ok()?.active_focus_node_id()?;
         Some(crate::dom::element::Element::from_native(
-            base.clone(),
+            base,
             node_id,
         ))
     }
@@ -140,7 +209,7 @@ impl Document {
 
     /// Sets the document viewport scroll offset and notifies registered scroll observers.
     pub fn set_viewport_scroll(&self, x: f64, y: f64) {
-        if let Some(base) = &self.inner {
+        if let Some(base) = self.get_base() {
             base.borrow_mut()
                 .set_viewport_scroll(blitz_dom::Point { x, y });
             self.dispatch_scroll();
@@ -149,7 +218,7 @@ impl Document {
 
     /// Queries the live viewport dimensions (width, height) directly from the Blitz document.
     pub fn inner_size(&self) -> (f64, f64) {
-        let Some(base) = &self.inner else {
+        let Some(base) = self.get_base() else {
             return (0.0, 0.0);
         };
         let base = base.borrow();
@@ -160,7 +229,7 @@ impl Document {
 
     /// Queries the live viewport scroll offset (x, y) directly from the Blitz document.
     pub fn viewport_scroll_offset(&self) -> (f64, f64) {
-        let Some(base) = &self.inner else {
+        let Some(base) = self.get_base() else {
             return (0.0, 0.0);
         };
         let scroll = base.borrow().viewport_scroll();
@@ -169,7 +238,7 @@ impl Document {
 
     /// Queries the live viewport dimensions and scroll offsets from the underlying Blitz document.
     pub fn viewport(&self) -> crate::runtime::geometry::Viewport {
-        let Some(base) = &self.inner else {
+        let Some(base) = self.get_base() else {
             return crate::runtime::geometry::Viewport::default();
         };
         let base = base.borrow();
@@ -189,7 +258,8 @@ impl Document {
     /// Measures the bounding client rectangle of an element by ID by accumulating
     /// layout coordinates over the ancestor hierarchy and accounting for viewport scroll.
     pub fn measure_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
-        let base = self.inner.as_ref()?.borrow();
+        let base_rc = self.get_base()?;
+        let base = base_rc.borrow();
         let node_id = base.get_element_by_id(element_id)?;
         let node = base.get_node(node_id)?;
         let layout = node.final_layout();
@@ -225,8 +295,7 @@ impl Document {
     /// Requests focus for the element with the specified ID in the Blitz DOM.
     pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
         let base = self
-            .inner
-            .as_ref()
+            .get_base()
             .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
         let mut base_mut = base.borrow_mut();
         let node_id = base_mut
@@ -238,7 +307,7 @@ impl Document {
 
     /// Checks if the element with the specified ID currently holds document focus in the Blitz DOM.
     pub fn is_element_active(&self, element_id: &str) -> bool {
-        let Some(base) = &self.inner else {
+        let Some(base) = self.get_base() else {
             return false;
         };
         let base = base.borrow();
@@ -270,10 +339,93 @@ impl Document {
 
     /// Restyles the tree, relayouts it, and triggers observer notifications on changed elements.
     pub fn resolve(&self, current_time_for_animations: f64) {
-        if let Some(base) = &self.inner {
+        if let Some(base) = self.get_base() {
+            let prev_len = base.borrow().pending_animation_events.len();
             base.borrow_mut().resolve(current_time_for_animations);
+            self.sync_animation_observers(prev_len);
+            self.last_synced_len.set(base.borrow().pending_animation_events.len());
             self.notify_layout_observers();
         }
+    }
+
+    /// Synchronizes native animation and transition completion and cancellation events from Blitz's pending queue
+    /// into registered transition observers without destroying or draining the queue.
+    pub fn sync_animation_observers(&self, prev_len: usize) {
+        let Some(base) = self.get_base() else {
+            return;
+        };
+        let b = base.borrow();
+        let start_idx = prev_len.min(b.pending_animation_events.len());
+        let events = &b.pending_animation_events[start_idx..];
+        if events.is_empty() {
+            return;
+        }
+
+        enum EventKind {
+            AnimationEnd(String),
+            AnimationCancel(String),
+            TransitionEnd(String),
+            TransitionCancel(String),
+        }
+
+        let mut dispatches = Vec::new();
+        for queued in events {
+            let event_match = match &queued.event {
+                DomEventData::AnimationEnd(anim) => Some(EventKind::AnimationEnd(anim.animation_name.clone())),
+                DomEventData::AnimationCancel(anim) => Some(EventKind::AnimationCancel(anim.animation_name.clone())),
+                DomEventData::TransitionEnd(trans) => Some(EventKind::TransitionEnd(trans.property_name.clone())),
+                DomEventData::TransitionCancel(trans) => Some(EventKind::TransitionCancel(trans.property_name.clone())),
+                _ => None,
+            };
+
+            if let Some(kind) = event_match {
+                let element_id = b.get_node(queued.node_id).and_then(|node| {
+                    node.element_data()
+                        .and_then(|el| el.id.as_deref().map(|s| s.to_string()))
+                        .or_else(|| node.attr(blitz_dom::local_name!("id")).map(|s| s.to_string()))
+                });
+                if let Some(id) = element_id {
+                    dispatches.push((id, kind));
+                }
+            }
+        }
+        drop(b);
+
+        for (element_id, kind) in dispatches {
+            match kind {
+                EventKind::AnimationEnd(name) => self.dispatch_animation_end(&element_id, &name),
+                EventKind::AnimationCancel(name) => self.dispatch_animation_cancel(&element_id, &name),
+                EventKind::TransitionEnd(prop) => self.dispatch_transition_end(&element_id, &prop),
+                EventKind::TransitionCancel(prop) => self.dispatch_transition_cancel(&element_id, &prop),
+            }
+        }
+    }
+
+    /// Synchronizes all native animation completion and cancellation events from Blitz's pending queue.
+    pub fn sync_animation_observers_all(&self) {
+        self.sync_animation_observers(0);
+        if let Some(base) = self.get_base() {
+            self.last_synced_len.set(base.borrow().pending_animation_events.len());
+        }
+    }
+
+    /// Synchronizes animation and transition events queued by external `BaseDocument::resolve` calls
+    /// idempotently without re-processing earlier events or draining `pending_animation_events`.
+    pub fn pump_hosted_observers(&self) {
+        let Some(base) = self.get_base() else { return };
+        let cur_len = base.borrow().pending_animation_events.len();
+        let prev_len = self.last_synced_len.get();
+        let start_idx = if cur_len < prev_len {
+            self.last_synced_len.set(cur_len);
+            0
+        } else {
+            prev_len
+        };
+        if cur_len > start_idx {
+            self.sync_animation_observers(start_idx);
+            self.last_synced_len.set(cur_len);
+        }
+        self.notify_layout_observers();
     }
 
     /// Evaluates all registered resize observers and fires callbacks for elements whose layout changed.
@@ -312,7 +464,7 @@ impl Document {
                             true
                         };
                         if changed {
-                            obs.last_rect = Some(rect.clone());
+                            obs.last_rect = Some(rect);
                             pending.push((
                                 obs.callback.clone(),
                                 crate::dom::observer::ResizeEntry {
@@ -340,20 +492,18 @@ impl Document {
 
     /// Resolves the ancestor hierarchy of element IDs from target up to the document root.
     pub fn node_chain_ids(&self, node_id: blitz_dom::NodeId) -> Vec<String> {
-        let Some(base) = &self.inner else {
+        let Some(base) = self.get_base() else {
             return Vec::new();
         };
         let base = base.borrow();
         let chain = base.node_chain(node_id);
         let mut path_ids = Vec::with_capacity(chain.len());
         for &nid in &chain {
-            if let Some(node) = base.get_node(nid) {
-                if let Some(el) = node.element_data() {
-                    if let Some(id) = &el.id {
+            if let Some(node) = base.get_node(nid)
+                && let Some(el) = node.element_data()
+                    && let Some(id) = &el.id {
                         path_ids.push(id.to_string());
                     }
-                }
-            }
         }
         path_ids
     }
@@ -414,6 +564,26 @@ impl Document {
         }
     }
 
+    /// Dispatches a transition completion signal to registered transition observers.
+    pub fn dispatch_transition_end(&self, element_id: &str, property_name: &str) {
+        let observers = take_transition_observers(element_id);
+        for mut obs in observers {
+            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TransitionEnd {
+                property_name: property_name.to_string(),
+            });
+        }
+    }
+
+    /// Dispatches a transition cancellation signal to registered transition observers.
+    pub fn dispatch_transition_cancel(&self, element_id: &str, property_name: &str) {
+        let observers = take_transition_observers(element_id);
+        for mut obs in observers {
+            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TransitionCancel {
+                property_name: property_name.to_string(),
+            });
+        }
+    }
+
     /// Dispatches a timeout fallback signal to registered transition observers.
     pub fn dispatch_transition_fallback(&self, element_id: &str) {
         let observers = take_transition_observers(element_id);
@@ -424,7 +594,7 @@ impl Document {
 
     /// Dispatches a form reset signal to registered form reset observers.
     pub fn dispatch_form_reset(&self, form_element_id: &str) {
-        let Some(base) = &self.inner else {
+        let Some(base) = self.get_base() else {
             return;
         };
         let Ok(base_ref) = base.try_borrow() else {
@@ -442,14 +612,13 @@ impl Document {
                     if expected_form_id == form_element_id {
                         matching.push(obs.callback.clone());
                     }
-                } else if let Some(fnid) = form_node_id {
-                    if let Some(el_nid) = base_ref.get_element_by_id(&obs.element_id) {
+                } else if let Some(fnid) = form_node_id
+                    && let Some(el_nid) = base_ref.get_element_by_id(&obs.element_id) {
                         let chain = base_ref.node_chain(el_nid);
                         if chain.contains(&fnid) {
                             matching.push(obs.callback.clone());
                         }
                     }
-                }
             }
             matching
         });
@@ -497,19 +666,17 @@ impl Document {
 
     /// Dispatches an element scroll event by looking up the element's DOM ID from its `NodeId`.
     pub fn dispatch_element_scroll_by_node_id(&self, node_id: blitz_dom::NodeId) {
-        let Some(base) = &self.inner else {
+        let Some(base) = self.get_base() else {
             return;
         };
         let b = base.borrow();
-        if let Some(node) = b.get_node(node_id) {
-            if let Some(el) = node.element_data() {
-                if let Some(id) = &el.id {
+        if let Some(node) = b.get_node(node_id)
+            && let Some(el) = node.element_data()
+                && let Some(id) = &el.id {
                     let id_str = id.to_string();
                     drop(b);
                     self.dispatch_element_scroll(&id_str);
                 }
-            }
-        }
     }
 
     /// Queries the descendant tree order of elements matching `candidate_ids` within `root_id`.
@@ -521,11 +688,10 @@ impl Document {
         root_id: &str,
         candidate_ids: &[&str],
     ) -> Result<Vec<String>, crate::error::HostError> {
-        let base = self
-            .inner
-            .as_ref()
+        let base_rc = self
+            .get_base()
             .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
-        let base = base.borrow();
+        let base = base_rc.borrow();
         let root_node_id = base
             .get_element_by_id(root_id)
             .or_else(|| base.query_selector(&format!("#{root_id}")).ok().flatten())
@@ -548,16 +714,14 @@ impl Document {
 
         while let Some(current_id) = stack.pop() {
             if let Some(node) = base.get_node(current_id) {
-                if let Some(el) = node.element_data() {
-                    if let Some(id) = el.id.as_deref() {
-                        if candidate_set.remove(id) {
+                if let Some(el) = node.element_data()
+                    && let Some(id) = el.id.as_deref()
+                        && candidate_set.remove(id) {
                             ordered_ids.push(id.to_string());
                             if candidate_set.is_empty() {
                                 break;
                             }
                         }
-                    }
-                }
                 for &child_id in node.children.iter().rev() {
                     stack.push(child_id);
                 }
@@ -625,11 +789,10 @@ pub(crate) fn observe_element_resize(
     callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     let sub_id = crate::internal::next_subscription_id();
-    if let Some(doc) = Document::current() {
-        if doc.element_by_id(element_id).is_none() {
+    if let Some(doc) = Document::current()
+        && doc.element_by_id(element_id).is_none() {
             return Err(crate::error::Error::ElementNotFound(element_id.to_string()));
         }
-    }
     let initial_rect = Document::current().and_then(|doc| doc.measure_rect(element_id));
     CURRENT_OBSERVERS.with(|cell| {
         cell.borrow_mut().resize_observers.insert(
@@ -790,11 +953,10 @@ pub(crate) fn observe_element_scroll(
     let sub_id = crate::internal::next_subscription_id();
     let el_id = element_id.to_string();
 
-    if let Some(doc) = Document::current() {
-        if doc.element_by_id(element_id).is_none() {
+    if let Some(doc) = Document::current()
+        && doc.element_by_id(element_id).is_none() {
             return Err(crate::error::Error::ElementNotFound(element_id.to_string()));
         }
-    }
 
     let el_id_clone = el_id.clone();
     CURRENT_OBSERVERS.with(|cell| {
@@ -811,14 +973,13 @@ pub(crate) fn observe_element_scroll(
         None,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
-                if let Ok(mut reg) = cell.try_borrow_mut() {
-                    if let Some(observers) = reg.element_scroll_observers.get_mut(&el_id_clone) {
+                if let Ok(mut reg) = cell.try_borrow_mut()
+                    && let Some(observers) = reg.element_scroll_observers.get_mut(&el_id_clone) {
                         observers.retain(|(id, _)| *id != sub_id);
                         if observers.is_empty() {
                             reg.element_scroll_observers.remove(&el_id_clone);
                         }
                     }
-                }
             });
         },
     ))

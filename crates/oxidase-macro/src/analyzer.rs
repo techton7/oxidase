@@ -449,17 +449,15 @@ fn parse_return_type(
             };
 
             if type_name == "Promise" {
-                if let Some(type_args) = &type_ref.type_params {
-                    if let Some(inner) = type_args.params.first() {
-                        if let TsType::TsKeywordType(kw) = &**inner {
-                            if kw.kind == TsKeywordTypeKind::TsVoidKeyword {
+                if let Some(type_args) = &type_ref.type_params
+                    && let Some(inner) = type_args.params.first() {
+                        if let TsType::TsKeywordType(kw) = &**inner
+                            && kw.kind == TsKeywordTypeKind::TsVoidKeyword {
                                 return Ok((None, true, true, false));
                             }
-                        }
                         let inner_rust = map_ts_to_rust_return(inner);
                         return Ok((Some(inner_rust), true, false, false));
                     }
-                }
                 return Ok((None, true, true, false));
             }
 
@@ -525,15 +523,13 @@ fn map_ts_to_rust_param(ty: &TsType) -> proc_macro2::TokenStream {
         TsType::TsTypeRef(type_ref) => {
             if let TsEntityName::Ident(id) = &type_ref.type_name {
                 let sym = id.sym.as_ref();
-                if sym == "Array" {
-                    if let Some(params) = &type_ref.type_params {
-                        if let Some(first) = params.params.first() {
+                if sym == "Array"
+                    && let Some(params) = &type_ref.type_params
+                        && let Some(first) = params.params.first() {
                             let inner = map_ts_to_rust_param(first);
                             return quote! { &[#inner] };
                         }
-                    }
-                }
-                let ident = syn::Ident::new(&id.sym.to_string(), proc_macro2::Span::call_site());
+                let ident = syn::Ident::new(id.sym.as_ref(), proc_macro2::Span::call_site());
                 quote! { &#ident }
             } else {
                 quote! { ::oxidase::serde_json::Value }
@@ -588,15 +584,13 @@ fn map_ts_to_rust_return(ty: &TsType) -> proc_macro2::TokenStream {
         TsType::TsTypeRef(type_ref) => {
             if let TsEntityName::Ident(id) = &type_ref.type_name {
                 let sym = id.sym.as_ref();
-                if sym == "Array" {
-                    if let Some(params) = &type_ref.type_params {
-                        if let Some(first) = params.params.first() {
+                if sym == "Array"
+                    && let Some(params) = &type_ref.type_params
+                        && let Some(first) = params.params.first() {
                             let inner = map_ts_to_rust_return(first);
                             return quote! { Vec<#inner> };
                         }
-                    }
-                }
-                let ident = syn::Ident::new(&id.sym.to_string(), proc_macro2::Span::call_site());
+                let ident = syn::Ident::new(id.sym.as_ref(), proc_macro2::Span::call_site());
                 quote! { #ident }
             } else {
                 quote! { ::oxidase::serde_json::Value }

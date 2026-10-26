@@ -17,6 +17,11 @@ impl Document {
         Self { _private: () }
     }
 
+    /// Returns whether this document is authoritative. Always true for mock documents.
+    pub fn is_authoritative(&self) -> bool {
+        true
+    }
+
     /// Returns the element with the specified ID if present in mock document.
     pub fn element_by_id(&self, _id: &str) -> Option<crate::dom::element::Element> {
         None
@@ -70,10 +75,32 @@ impl Document {
         false
     }
 
+    /// Returns whether any CSS animations are currently active. Always false in mock backend.
+    #[inline]
+    pub fn is_animating(&self) -> bool {
+        false
+    }
+
+    /// Synchronizes hosted observers. No-op in mock backend.
+    #[inline]
+    pub fn pump_hosted_observers(&self) {}
+
     /// Returns the active observer counts for element scroll listeners.
     pub fn element_scroll_observer_count(&self, _element_id: Option<&str>) -> usize {
         0
     }
+
+    /// Dispatches an animation completion signal for testing / host API parity.
+    pub fn dispatch_animation_end(&self, _element_id: &str, _animation_name: &str) {}
+
+    /// Dispatches an animation cancellation signal for testing / host API parity.
+    pub fn dispatch_animation_cancel(&self, _element_id: &str, _animation_name: &str) {}
+
+    /// Dispatches a transition completion signal for testing / host API parity.
+    pub fn dispatch_transition_end(&self, _element_id: &str, _property_name: &str) {}
+
+    /// Dispatches a transition cancellation signal for testing / host API parity.
+    pub fn dispatch_transition_cancel(&self, _element_id: &str, _property_name: &str) {}
 
     /// Queries mock descendant order. Fails closed with Unsupported.
     pub fn query_descendant_order(

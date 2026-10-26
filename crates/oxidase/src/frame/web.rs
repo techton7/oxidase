@@ -10,7 +10,7 @@ use wasm_bindgen::JsCast;
 use super::types::{FrameInfo, FrameLoopError, FrameLoopGuard, FrameRequestGuard};
 
 thread_local! {
-    static LAST_WEB_RAF_MS: Cell<Option<f64>> = Cell::new(None);
+    static LAST_WEB_RAF_MS: Cell<Option<f64>> = const { Cell::new(None) };
 }
 
 /// Starts an ongoing animation frame loop driven by `window.requestAnimationFrame`.
@@ -50,14 +50,12 @@ pub fn start_frame_loop(
 
         on_frame(info);
 
-        if *running_flag.borrow() {
-            if let Some(w) = web_sys::window() {
-                if let Some(ref cb) = *closure_holder.borrow() {
-                    if let Ok(id) = w.request_animation_frame(cb.as_ref().unchecked_ref()) {
-                        *raf_id_cell.borrow_mut() = Some(id);
-                    }
-                }
-            }
+        if *running_flag.borrow()
+            && let Some(w) = web_sys::window()
+            && let Some(ref cb) = *closure_holder.borrow()
+            && let Ok(id) = w.request_animation_frame(cb.as_ref().unchecked_ref())
+        {
+            *raf_id_cell.borrow_mut() = Some(id);
         }
     }) as Box<dyn FnMut(f64)>));
 
@@ -76,10 +74,10 @@ pub fn start_frame_loop(
 
     Ok(FrameLoopGuard::new(move || {
         *cancel_running.borrow_mut() = false;
-        if let Some(id) = cancel_raf_id.borrow_mut().take() {
-            if let Some(w) = web_sys::window() {
-                let _ = w.cancel_animation_frame(id);
-            }
+        if let Some(id) = cancel_raf_id.borrow_mut().take()
+            && let Some(w) = web_sys::window()
+        {
+            let _ = w.cancel_animation_frame(id);
         }
         let _ = cancel_closure.borrow_mut().take();
     }))
@@ -140,12 +138,11 @@ pub fn request_next_frame(
         if let Ok(mut c) = cancel_cb.try_borrow_mut() {
             c.take();
         }
-        if let Ok(mut r) = cancel_raf_id.try_borrow_mut() {
-            if let Some(id) = r.take() {
-                if let Some(w) = web_sys::window() {
-                    let _ = w.cancel_animation_frame(id);
-                }
-            }
+        if let Ok(mut r) = cancel_raf_id.try_borrow_mut()
+            && let Some(id) = r.take()
+            && let Some(w) = web_sys::window()
+        {
+            let _ = w.cancel_animation_frame(id);
         }
         if let Ok(mut cl) = cancel_closure.try_borrow_mut() {
             cl.take();

@@ -395,6 +395,101 @@ impl Element {
             ElementTarget::Mock => false,
         }
     }
+
+    /// Returns the value of the specified attribute, if present.
+    pub fn get_attribute(&self, name: &str) -> Option<String> {
+        let _ = name;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.borrow();
+                let node = base.get_node(*node_id)?;
+                let elem = node.element_data()?;
+                elem.attrs
+                    .iter()
+                    .find(|a| (a.name.ns == blitz_dom::ns!() || a.name.ns.is_empty()) && &*a.name.local == name)
+                    .map(|a| a.value.to_string())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.get_attribute(name),
+            ElementTarget::Mounted(_) => None,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
+        }
+    }
+
+    /// Sets the value of the specified attribute on this element using the empty namespace `ns!()`.
+    pub fn set_attribute(&self, name: &str, value: &str) {
+        let _ = (name, value);
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.borrow_mut();
+                let qname = blitz_dom::QualName::new(
+                    None,
+                    blitz_dom::ns!(),
+                    blitz_dom::LocalName::from(name),
+                );
+                base.mutate().set_attribute(*node_id, qname, value);
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                let _ = el.set_attribute(name, value);
+            }
+            ElementTarget::Mounted(_) => {}
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => {}
+        }
+    }
+
+    /// Removes the specified attribute from this element.
+    pub fn remove_attribute(&self, name: &str) {
+        let _ = name;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.borrow_mut();
+                let qname = blitz_dom::QualName::new(
+                    None,
+                    blitz_dom::ns!(),
+                    blitz_dom::LocalName::from(name),
+                );
+                base.mutate().clear_attribute(*node_id, qname);
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                let _ = el.remove_attribute(name);
+            }
+            ElementTarget::Mounted(_) => {}
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => {}
+        }
+    }
+
+    /// Checks if this element has the specified attribute.
+    pub fn has_attribute(&self, name: &str) -> bool {
+        let _ = name;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.borrow();
+                let Some(node) = base.get_node(*node_id) else {
+                    return false;
+                };
+                let Some(elem) = node.element_data() else {
+                    return false;
+                };
+                elem.attrs
+                    .iter()
+                    .any(|a| (a.name.ns == blitz_dom::ns!() || a.name.ns.is_empty()) && &*a.name.local == name)
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.has_attribute(name),
+            ElementTarget::Mounted(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => false,
+        }
+    }
 }
 
 impl Scrollable for Element {
@@ -473,6 +568,10 @@ mod tests {
             let el = Element::mock();
             assert_eq!(el.id(), None);
             assert!(!el.is_connected());
+            assert!(!el.has_attribute("data-state"));
+            assert_eq!(el.get_attribute("data-state"), None);
+            el.set_attribute("data-state", "open");
+            el.remove_attribute("data-state");
             let debug_str = format!("{:?}", el);
             assert!(debug_str.contains("Element"));
         }

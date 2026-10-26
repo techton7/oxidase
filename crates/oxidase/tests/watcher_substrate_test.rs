@@ -55,6 +55,7 @@ impl TestContext {
         Self { doc, root_id, base }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_element(
         &self,
         parent_id: blitz_dom::NodeId,
@@ -86,8 +87,7 @@ impl TestContext {
                         value: format!(
                             "position: absolute; left: {}px; top: {}px; width: {}px; height: {}px;",
                             x, y, w, h
-                        )
-                        .into(),
+                        ),
                     },
                 ],
             );
@@ -140,8 +140,7 @@ impl TestContext {
                         value: format!(
                             "position: absolute; left: {}px; top: {}px; width: {}px; height: {}px; overflow: scroll;",
                             x, y, w, h
-                        )
-                        .into(),
+                        ),
                     },
                 ],
             );
@@ -592,6 +591,56 @@ fn test_watch_presence_exit_and_fallback() {
     });
 }
 
+#[test]
+fn test_watch_presence_synthetic_transition_dispatch() {
+    let ctx = TestContext::new();
+    let _dialog_id = ctx.add_element(ctx.root_id, "div", "trans-dialog-el", 0.0, 0.0, 300.0, 200.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let presence_events = Rc::new(RefCell::new(Vec::new()));
+        let p = presence_events.clone();
+
+        let _guard = watch_presence("trans-dialog-el", 101, move |ev| {
+            p.borrow_mut().push(ev);
+        })
+        .expect("watch_presence must succeed");
+
+        // Dispatch transition end for cycle 101
+        ctx.doc.dispatch_transition_end("trans-dialog-el", "opacity");
+
+        let events = presence_events.borrow();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0],
+            PresenceEvent::TransitionEnd {
+                cycle_id: 101,
+                property_name: "opacity".to_string(),
+            }
+        );
+        drop(events);
+
+        // Test transition cancel with another watcher
+        let cancel_events = Rc::new(RefCell::new(Vec::new()));
+        let c = cancel_events.clone();
+        let _guard_cancel = watch_presence("trans-dialog-el", 102, move |ev| {
+            c.borrow_mut().push(ev);
+        })
+        .expect("watch_presence must succeed");
+
+        ctx.doc.dispatch_transition_cancel("trans-dialog-el", "transform");
+
+        let events = cancel_events.borrow();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0],
+            PresenceEvent::TransitionCancel {
+                cycle_id: 102,
+                property_name: "transform".to_string(),
+            }
+        );
+    });
+}
+
 // 8. Layer 2: Form reset dispatch on enclosing and explicit forms
 #[test]
 fn test_watch_form_reset_dispatch() {
@@ -770,8 +819,6 @@ fn test_live_blitz_input_capture_pointer_and_keyboard() {
 }
 
 // 12. Gap 2 Live Engine Proof: Live CSS animation completion dispatch in Stylo into watch_presence
-// (Gated until Blitz Stylo animation completion bridge is restored following blitz-dom 0.3.0 event refactoring)
-#[cfg(any())]
 #[test]
 fn test_live_blitz_animation_completion_dispatch() {
     let ctx = TestContext::new();
@@ -821,6 +868,68 @@ fn test_live_blitz_animation_completion_dispatch() {
                 cycle_id: 77,
                 animation_name: "fade-out".to_string(),
             }
+        );
+    });
+}
+
+// 12b. Gap 2 Live Engine Proof: Live CSS transition completion dispatch in Stylo into watch_presence
+#[test]
+fn test_live_blitz_transition_completion_dispatch() {
+    let ctx = TestContext::new();
+    let modal_id = ctx.add_element(ctx.root_id, "div", "modal-box", 0.0, 0.0, 200.0, 200.0);
+
+    // Set up stylesheet with transition: opacity 0.1s; opacity: 1;
+    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+        #modal-box {
+            transition: opacity 0.1s linear;
+            opacity: 1;
+        }
+    "#);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let presence_events = Rc::new(RefCell::new(Vec::new()));
+        let p = presence_events.clone();
+
+        // Initial tick at t=0.0
+        ctx.doc.resolve(0.0);
+
+        let _guard = watch_presence("modal-box", 88, move |ev| {
+            p.borrow_mut().push(ev);
+        })
+        .expect("watch_presence must succeed");
+
+        // Mutate style: set opacity to 0
+        ctx.base.borrow_mut().mutate().set_style_property(modal_id, "opacity", "0");
+
+        // Tick at t=0.0 to start transition
+        ctx.doc.resolve(0.0);
+        assert!(
+            presence_events.borrow().is_empty(),
+            "Transition should be running at t=0.0 and not yet emit completion"
+        );
+
+        // Advance time past the 0.1s transition duration to t=0.2
+        ctx.doc.resolve(0.2);
+
+        let events = presence_events.borrow();
+        assert_eq!(
+            events.len(),
+            1,
+            "Live Blitz transition end must trigger presence watcher"
+        );
+        assert_eq!(
+            events[0],
+            PresenceEvent::TransitionEnd {
+                cycle_id: 88,
+                property_name: "opacity".to_string(),
+            }
+        );
+        drop(events);
+
+        // Verify pending_animation_events is NOT empty (events preserved for flush_animation_events)
+        assert!(
+            !ctx.base.borrow().pending_animation_events.is_empty(),
+            "Pending animation/transition events must be preserved for flush_animation_events"
         );
     });
 }
@@ -1131,3 +1240,499 @@ fn test_transition_lifecycle_guard_drop_inside_callback_no_panic() {
         );
     });
 }
+
+// 21. Live BaseDocument upgrade and authoritative presence resolution
+#[test]
+fn test_hosted_window_live_base_document_upgrade_and_presence_resolve() {
+    Document::set_current(None);
+
+    // 1. Initialize ambient document context via ensure_document_context() (simulating #[oxidase::main] before window mount)
+    oxidase::launch::ensure_document_context();
+
+    // 2. Confirm Document::current().unwrap().is_authoritative() == false
+    let doc = Document::current().expect("ambient Document context must be present");
+    assert!(
+        !doc.is_authoritative(),
+        "Ambient unattached document must not be authoritative before window mount"
+    );
+    assert!(
+        !Document::current().unwrap().is_authoritative(),
+        "Document::current() must reflect non-authoritative status"
+    );
+
+    // 3. Create a live BaseDocument with an element <div id="hosted-card"> and styles
+    let mut base_doc = BaseDocument::new(DocumentConfig::default());
+    {
+        let mut vp = base_doc.viewport_mut();
+        vp.window_size = (1920, 1080);
+        vp.hidpi_scale = 1.0;
+    }
+    let doc_root = base_doc.root_node().id;
+    let _card_id = {
+        let mut mutator = base_doc.mutate();
+        let card_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "hosted-card".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "width: 100px; height: 100px; margin: 0;".into(),
+                },
+            ],
+        );
+        mutator.append_children(doc_root, &[card_id]);
+        card_id
+    };
+    let live_base = Rc::new(RefCell::new(base_doc));
+
+    // 4. Call doc.bind_live_base(live_base) (simulating HostedRootWrapper::onmounted)
+    doc.bind_live_base(live_base.clone());
+
+    // 5. Verify doc.is_authoritative() == true, Document::current().unwrap().is_authoritative() == true, and doc.element_by_id("hosted-card").is_some()
+    assert!(
+        doc.is_authoritative(),
+        "doc.is_authoritative() must be true after bind_live_base"
+    );
+    assert!(
+        Document::current().unwrap().is_authoritative(),
+        "Document::current().unwrap().is_authoritative() must be true after bind_live_base"
+    );
+    assert!(
+        doc.element_by_id("hosted-card").is_some(),
+        "Element #hosted-card must be found via element_by_id"
+    );
+
+    Document::set_current(None);
+}
+
+// 22. Hosted frame step pumping external animation completion
+#[test]
+fn test_hosted_window_step_hosted_frame_pump_external_animation_completion() {
+    Document::set_current(None);
+
+    // 1. Bind live BaseDocument to Document::current()
+    oxidase::launch::ensure_document_context();
+    let doc = Document::current().expect("ambient document must exist");
+    let ctx = TestContext::new();
+    doc.bind_live_base(ctx.base.clone());
+    assert!(
+        doc.is_authoritative(),
+        "Bound document must be authoritative"
+    );
+    assert!(
+        Document::current().unwrap().is_authoritative(),
+        "Document::current() must reflect authoritative status"
+    );
+
+    // 2. Add an element with CSS animation or transition (e.g. opacity transition)
+    let target_id = ctx.add_element(ctx.root_id, "div", "target-el", 0.0, 0.0, 200.0, 200.0);
+    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+        #target-el {
+            transition: opacity 0.1s linear;
+            opacity: 1;
+        }
+    "#);
+
+    // Initial external resolve at t=0.0 to compute initial styles (opacity: 1)
+    ctx.base.borrow_mut().resolve(0.0);
+
+    // Track host redraw requests during animation
+    let redraw_count = Rc::new(RefCell::new(0usize));
+    let rc = redraw_count.clone();
+    let _redraw_guard = oxidase::launch::bind_host_redraw_requester(move || {
+        *rc.borrow_mut() += 1;
+    });
+
+    // 3. Attach watch_presence("target-el", 42, ...)
+    let presence_events = Rc::new(RefCell::new(Vec::new()));
+    let p = presence_events.clone();
+    let _guard = watch_presence("target-el", 42, move |ev| {
+        p.borrow_mut().push(ev);
+    })
+    .expect("watch_presence must succeed");
+
+    // 4. Mutate style property on BaseDocument directly (mutator.set_style_property(..., "opacity", "0"))
+    ctx.base.borrow_mut().mutate().set_style_property(target_id, "opacity", "0");
+
+    // 5. Call base.borrow_mut().resolve(0.0) directly (simulating external blitz-shell View::redraw without calling Document::resolve)
+    ctx.base.borrow_mut().resolve(0.0);
+    assert!(
+        presence_events.borrow().is_empty(),
+        "Transition should be running at t=0.0 and not yet emit completion"
+    );
+    assert!(
+        ctx.base.borrow().is_animating(),
+        "BaseDocument must be animating during active transition"
+    );
+
+    // Calling step_hosted_frame while animating requests host redraw even with 0 frame subscribers
+    oxidase::launch::step_hosted_frame();
+    assert_eq!(
+        *redraw_count.borrow(),
+        1,
+        "is_animating must request host redraw in step_hosted_frame"
+    );
+
+    // 6. Advance time externally: base.borrow_mut().resolve(0.2)
+    ctx.base.borrow_mut().resolve(0.2);
+    assert!(
+        !ctx.base.borrow().is_animating(),
+        "BaseDocument must finish animating after 0.2s duration elapsed"
+    );
+    assert!(
+        presence_events.borrow().is_empty(),
+        "Events must not be pumped until step_hosted_frame or resolve"
+    );
+
+    // 7. Call oxidase::launch::step_hosted_frame() (simulating WindowEvent::RedrawRequested)
+    oxidase::launch::step_hosted_frame();
+
+    // 8. Verify watch_presence received PresenceEvent::TransitionEnd (or AnimationEnd) automatically without ever having called Document::resolve()
+    let events = presence_events.borrow();
+    assert_eq!(
+        events.len(),
+        1,
+        "watch_presence must receive TransitionEnd via step_hosted_frame without Document::resolve"
+    );
+    assert_eq!(
+        events[0],
+        PresenceEvent::TransitionEnd {
+            cycle_id: 42,
+            property_name: "opacity".to_string(),
+        }
+    );
+    drop(events);
+
+    // 9. Verify pending_animation_events was NOT drained
+    assert!(
+        !ctx.base.borrow().pending_animation_events.is_empty(),
+        "pending_animation_events must not be drained"
+    );
+
+    // After animation finished and no frame subscribers, step_hosted_frame idles (no additional redraw requested)
+    assert_eq!(
+        *redraw_count.borrow(),
+        1,
+        "step_hosted_frame must idle once animation completes"
+    );
+
+    Document::set_current(None);
+}
+
+// 23. Parity Proof: Attribute toggle data-state matches CSS selector [data-state="closed"] with keyframes animation
+#[test]
+fn test_attribute_toggle_data_state_css_keyframes_animation_presence() {
+    let ctx = TestContext::new();
+    let _modal_id = ctx.add_element(ctx.root_id, "div", "anim-state-box", 0.0, 0.0, 200.0, 200.0);
+
+    // CSS rule using attribute selector [data-state="closed"] with @keyframes fade-out
+    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+        @keyframes fade-out {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+        [data-state="open"] {
+            opacity: 1;
+        }
+        [data-state="closed"] {
+            animation: fade-out 0.1s;
+        }
+    "#);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let el = ctx
+            .doc
+            .element_by_id("anim-state-box")
+            .expect("anim-state-box element must exist");
+
+        // Set initial state to "open"
+        el.set_attribute("data-state", "open");
+        assert_eq!(el.get_attribute("data-state").as_deref(), Some("open"));
+
+        // Initial layout and style resolve
+        ctx.doc.resolve(0.0);
+
+        let presence_events = Rc::new(RefCell::new(Vec::new()));
+        let p = presence_events.clone();
+
+        let _guard = watch_presence("anim-state-box", 301, move |ev| {
+            p.borrow_mut().push(ev);
+        })
+        .expect("watch_presence must succeed");
+
+        // Toggle data-state attribute from "open" to "closed" via Element::set_attribute
+        el.set_attribute("data-state", "closed");
+        assert_eq!(el.get_attribute("data-state").as_deref(), Some("closed"));
+
+        // Resolve at t=0.0: Stylo matches [data-state="closed"] selector and starts fade-out keyframes animation
+        ctx.doc.resolve(0.0);
+        assert!(
+            presence_events.borrow().is_empty(),
+            "Animation should be running at t=0.0 and not yet emit completion"
+        );
+
+        // Advance time past the 0.1s duration to t=0.2
+        ctx.doc.resolve(0.2);
+
+        let events = presence_events.borrow();
+        assert_eq!(
+            events.len(),
+            1,
+            "watch_presence must receive AnimationEnd upon CSS keyframes animation completion triggered by data-state toggle"
+        );
+        assert_eq!(
+            events[0],
+            PresenceEvent::AnimationEnd {
+                cycle_id: 301,
+                animation_name: "fade-out".to_string(),
+            }
+        );
+    });
+}
+
+// 24. Parity Proof: Attribute toggle data-state matches CSS selector [data-state="closed"] with transition
+#[test]
+fn test_attribute_toggle_data_state_css_transition_presence() {
+    let ctx = TestContext::new();
+    let _modal_id = ctx.add_element(ctx.root_id, "div", "trans-state-box", 0.0, 0.0, 200.0, 200.0);
+
+    // CSS rule using attribute selector [data-state="closed"] with transition: opacity 0.1s
+    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+        [data-state="open"] {
+            opacity: 1;
+            transition: opacity 0.1s linear;
+        }
+        [data-state="closed"] {
+            opacity: 0;
+            transition: opacity 0.1s linear;
+        }
+    "#);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let el = ctx
+            .doc
+            .element_by_id("trans-state-box")
+            .expect("trans-state-box element must exist");
+
+        // Set initial state to "open"
+        el.set_attribute("data-state", "open");
+        assert_eq!(el.get_attribute("data-state").as_deref(), Some("open"));
+
+        // Initial resolve to establish baseline style (opacity: 1)
+        ctx.doc.resolve(0.0);
+
+        let presence_events = Rc::new(RefCell::new(Vec::new()));
+        let p = presence_events.clone();
+
+        let _guard = watch_presence("trans-state-box", 402, move |ev| {
+            p.borrow_mut().push(ev);
+        })
+        .expect("watch_presence must succeed");
+
+        // Toggle data-state attribute from "open" to "closed" via Element::set_attribute
+        el.set_attribute("data-state", "closed");
+        assert_eq!(el.get_attribute("data-state").as_deref(), Some("closed"));
+
+        // Resolve at t=0.0: Stylo matches [data-state="closed"], opacity changes 1 -> 0, starting transition
+        ctx.doc.resolve(0.0);
+        assert!(
+            presence_events.borrow().is_empty(),
+            "Transition should be running at t=0.0 and not yet emit completion"
+        );
+
+        // Advance time past the 0.1s duration to t=0.2
+        ctx.doc.resolve(0.2);
+
+        let events = presence_events.borrow();
+        assert_eq!(
+            events.len(),
+            1,
+            "watch_presence must receive TransitionEnd upon CSS transition completion triggered by data-state toggle"
+        );
+        assert_eq!(
+            events[0],
+            PresenceEvent::TransitionEnd {
+                cycle_id: 402,
+                property_name: "opacity".to_string(),
+            }
+        );
+    });
+}
+
+// 25. End-to-end dioxus_native / DioxusDocument integration test:
+// Coexistence between Oxidase watch_presence and Dioxus flush_animation_events.
+#[test]
+fn test_dioxus_document_watch_presence_and_flush_animation_events_coexistence() {
+    use dioxus::prelude::*;
+
+    #[derive(Clone, Default)]
+    struct CoexistTransitionLog(Rc<RefCell<Vec<String>>>);
+
+    fn coexist_app() -> Element {
+        let log = consume_context::<CoexistTransitionLog>();
+        rsx! {
+            div {
+                id: "coexist-modal",
+                ontransitionend: move |evt| {
+                    let debug = format!("{:?}", evt.data());
+                    // TransitionData debug format is: TransitionData { property_name: "opacity", ... }
+                    let prop = if debug.contains("property_name: \"opacity\"") {
+                        "opacity".to_string()
+                    } else {
+                        debug
+                    };
+                    log.0.borrow_mut().push(prop);
+                },
+                "Coexist Modal"
+            }
+        }
+    }
+
+    let log = CoexistTransitionLog::default();
+    let vdom = VirtualDom::new(coexist_app).with_root_context(log.clone());
+    let mut doc = dioxus_native::DioxusDocument::new(vdom, DocumentConfig::default());
+    doc.initial_build();
+
+    let oxidase_doc = oxidase::dom::Document::from_base(doc.inner.clone());
+    oxidase::dom::Document::with_current(oxidase_doc.clone(), || {
+        // 4. Inject stylesheet with transition rules
+        doc.inner.borrow_mut().add_user_agent_stylesheet(r#"
+            #coexist-modal {
+                transition: opacity 0.1s linear;
+                opacity: 1;
+            }
+            #coexist-modal[data-state="closed"] {
+                opacity: 0;
+            }
+        "#);
+
+        // 5. Tick initial frame at t=0.0
+        oxidase_doc.resolve(0.0);
+
+        // 6. Attach Oxidase watch_presence("coexist-modal", 501, ...) logging PresenceEvents
+        let presence_events = Rc::new(RefCell::new(Vec::new()));
+        let p1 = presence_events.clone();
+        let _guard1 = watch_presence("coexist-modal", 501, move |ev| {
+            p1.borrow_mut().push(ev);
+        })
+        .expect("watch_presence must succeed");
+
+        // 7. Toggle el.set_attribute("data-state", "closed") using Oxidase Element::set_attribute
+        let el = oxidase_doc
+            .element_by_id("coexist-modal")
+            .expect("coexist-modal element must exist");
+        el.set_attribute("data-state", "closed");
+        assert_eq!(el.get_attribute("data-state").as_deref(), Some("closed"));
+
+        // 8. Tick frame at t=0.0 (starts transition), advance time to t=0.2 (transition completes)
+        oxidase_doc.resolve(0.0);
+        assert!(
+            presence_events.borrow().is_empty(),
+            "Transition should be running at t=0.0 and not yet emit completion"
+        );
+
+        oxidase_doc.resolve(0.2);
+
+        // 9. Assert Oxidase watch_presence received PresenceEvent::TransitionEnd { cycle_id: 501, property_name: "opacity" }
+        assert_eq!(
+            *presence_events.borrow(),
+            vec![PresenceEvent::TransitionEnd {
+                cycle_id: 501,
+                property_name: "opacity".to_string(),
+            }],
+            "watch_presence must receive TransitionEnd for cycle 501"
+        );
+
+        // 10. Assert doc.inner.borrow().pending_animation_events was NOT drained by Oxidase (events preserved for Dioxus)
+        assert!(
+            !doc.inner.borrow().pending_animation_events.is_empty(),
+            "doc.inner pending_animation_events was NOT drained by Oxidase"
+        );
+        assert!(
+            doc.inner.borrow().pending_animation_events.iter().any(|e| {
+                matches!(&e.event, blitz_traits::events::DomEventData::TransitionEnd(t) if t.property_name == "opacity")
+            }),
+            "TransitionEnd event must be preserved in pending_animation_events for Dioxus"
+        );
+
+        // 11. Call doc.flush_animation_events()
+        doc.flush_animation_events();
+
+        // 12. Assert the Dioxus component's ontransitionend handler received the event (e.g. property_name: "opacity")
+        assert_eq!(
+            *log.0.borrow(),
+            vec!["opacity".to_string()],
+            "Dioxus component ontransitionend handler must receive the event"
+        );
+
+        // 13. Assert doc.inner.borrow().pending_animation_events is now drained and empty
+        assert!(
+            doc.inner.borrow().pending_animation_events.is_empty(),
+            "doc.inner pending_animation_events must be drained and empty after Dioxus flush"
+        );
+
+        // 14. Run a second transition cycle (e.g. el.set_attribute("data-state", "open"), tick at 0.2, advance to 0.4),
+        // proving Oxidase resets its last_synced_len cursor gracefully and dispatches subsequent events to watch_presence without desynchronization or starvation.
+        let presence_events_cycle2 = Rc::new(RefCell::new(Vec::new()));
+        let p2 = presence_events_cycle2.clone();
+        let _guard2 = watch_presence("coexist-modal", 502, move |ev| {
+            p2.borrow_mut().push(ev);
+        })
+        .expect("watch_presence for cycle 502 must succeed");
+
+        el.set_attribute("data-state", "open");
+        assert_eq!(el.get_attribute("data-state").as_deref(), Some("open"));
+
+        // Tick at t=0.2 (transition begins: opacity 0 -> 1)
+        oxidase_doc.resolve(0.2);
+        assert!(
+            presence_events_cycle2.borrow().is_empty(),
+            "Cycle 2 transition running at t=0.2 and not yet emit completion"
+        );
+
+        // Advance to t=0.4 (transition completes)
+        oxidase_doc.resolve(0.4);
+
+        // Assert Oxidase watch_presence received cycle 502 event
+        assert_eq!(
+            *presence_events_cycle2.borrow(),
+            vec![PresenceEvent::TransitionEnd {
+                cycle_id: 502,
+                property_name: "opacity".to_string(),
+            }],
+            "watch_presence must receive TransitionEnd for cycle 502"
+        );
+
+        // Assert pending_animation_events has the new event preserved for Dioxus
+        assert!(
+            !doc.inner.borrow().pending_animation_events.is_empty(),
+            "doc.inner pending_animation_events preserved for Dioxus in cycle 2"
+        );
+        assert!(
+            doc.inner.borrow().pending_animation_events.iter().any(|e| {
+                matches!(&e.event, blitz_traits::events::DomEventData::TransitionEnd(t) if t.property_name == "opacity")
+            }),
+            "Cycle 2 TransitionEnd must be preserved in pending_animation_events for Dioxus"
+        );
+
+        // Call doc.flush_animation_events()
+        doc.flush_animation_events();
+
+        // Assert Dioxus component received the second event
+        assert_eq!(
+            *log.0.borrow(),
+            vec!["opacity".to_string(), "opacity".to_string()],
+            "Dioxus component ontransitionend handler must receive both cycle 1 and cycle 2 events"
+        );
+
+        // Assert pending_animation_events is drained and empty again
+        assert!(
+            doc.inner.borrow().pending_animation_events.is_empty(),
+            "doc.inner pending_animation_events must be drained and empty after cycle 2 Dioxus flush"
+        );
+    });
+}
+

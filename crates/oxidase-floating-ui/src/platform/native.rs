@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use blitz_dom::CopyStyleGetters;
 use blitz_dom::{BaseDocument, NodeId, QualName, local_name, ns};
 
 use crate::detect_overflow::DetectOverflowOptions;
@@ -149,7 +148,7 @@ where
         Boundary::Custom(rect) => Ok(rect),
         Boundary::Element(id) => {
             let target_node = resolve_id(&id)
-                .ok_or_else(|| Error::ElementNotFound(id))?;
+                .ok_or(Error::ElementNotFound(id))?;
             let rect = measure_node_rect(base, target_node).ok_or_else(|| {
                 Error::Unsupported(format!("Could not measure element {:?}", target_node))
             })?;
@@ -159,7 +158,7 @@ where
             let mut current = vp_rect;
             for id in ids {
                 let target_node = resolve_id(&id)
-                    .ok_or_else(|| Error::ElementNotFound(id))?;
+                    .ok_or(Error::ElementNotFound(id))?;
                 let rect = measure_node_rect(base, target_node).ok_or_else(|| {
                     Error::Unsupported(format!("Could not measure element {:?}", target_node))
                 })?;
@@ -236,11 +235,10 @@ impl NativeFloatingPlatform {
         let mut stack = vec![base.root_node().id];
         while let Some(nid) = stack.pop() {
             if let Some(node) = base.get_node(nid) {
-                if let Some(el) = node.element_data() {
-                    if el.id.as_deref() == Some(id) {
+                if let Some(el) = node.element_data()
+                    && el.id.as_deref() == Some(id) {
                         return Some(nid);
                     }
-                }
                 if node.attr(blitz_dom::local_name!("id")) == Some(id) {
                     return Some(nid);
                 }

@@ -75,13 +75,12 @@ impl WatcherGuard {
         }
         self.cleaned = true;
 
-        if let Some(task) = self.task.take() {
-            if ::dioxus::core::Runtime::try_current().is_some() {
+        if let Some(task) = self.task.take()
+            && ::dioxus::core::Runtime::try_current().is_some() {
                 let _ = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
                     task.cancel();
                 }));
             }
-        }
 
         if let Some(cleanup_fn) = self.custom_cleanup.take() {
             cleanup_fn();

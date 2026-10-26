@@ -48,6 +48,7 @@ impl TestContext {
         Self { doc, root_id, base }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_element(
         &self,
         parent_id: NodeId,
@@ -77,8 +78,7 @@ impl TestContext {
                         value: format!(
                             "position: absolute; left: {}px; top: {}px; width: {}px; height: {}px; display: block;",
                             x, y, w, h
-                        )
-                        .into(),
+                        ),
                     },
                 ],
             );
@@ -120,8 +120,7 @@ impl TestContext {
                         value: format!(
                             "position: absolute; left: {}px; top: {}px; width: {}px; height: {}px; overflow: scroll; display: block;",
                             x, y, w, h
-                        )
-                        .into(),
+                        ),
                     },
                 ],
             );

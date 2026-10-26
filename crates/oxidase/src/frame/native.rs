@@ -71,11 +71,10 @@ impl NativeFrameState {
     }
 
     fn notify_host_redraw(&self) {
-        if let Some((active, requester)) = &self.redraw_requester {
-            if active.get() && self.has_pending_frames() {
+        if let Some((active, requester)) = &self.redraw_requester
+            && active.get() {
                 requester();
             }
-        }
     }
 }
 
@@ -185,7 +184,12 @@ pub fn set_host_redraw_requester(requester: impl Fn() + 'static) -> HostRedrawGu
         let mut state = cell.borrow_mut();
         state.redraw_requester = Some((active, Rc::new(requester)));
         state.last_real_time = None;
-        state.notify_host_redraw();
+        let is_animating = crate::dom::Document::current()
+            .map(|d| d.is_authoritative() && d.is_animating())
+            .unwrap_or(false);
+        if state.has_pending_frames() || is_animating {
+            state.notify_host_redraw();
+        }
     });
     guard
 }
@@ -205,6 +209,12 @@ pub fn has_pending_frames() -> bool {
 ///
 /// Returns the elapsed `Duration` dispatched for this frame.
 pub fn step_hosted_frame() -> Duration {
+    if let Some(doc) = crate::dom::Document::current()
+        && doc.is_authoritative()
+    {
+        doc.pump_hosted_observers();
+    }
+
     let now_instant = Instant::now();
     let dt = FRAME_STATE.with(|cell| {
         let mut state = cell.borrow_mut();
@@ -231,7 +241,10 @@ pub fn step_hosted_frame() -> Duration {
     // If frames are still pending, schedule next redraw on the host
     FRAME_STATE.with(|cell| {
         let state = cell.borrow();
-        if state.has_pending_frames() {
+        let is_animating = crate::dom::Document::current()
+            .map(|d| d.is_authoritative() && d.is_animating())
+            .unwrap_or(false);
+        if state.has_pending_frames() || is_animating {
             state.notify_host_redraw();
         } else {
             // Idle state reached

@@ -51,7 +51,7 @@ fn App() -> Element {
     let mut last_dt = use_signal(|| Duration::ZERO);
     let mut status_msg = use_signal(|| "Starting Frame Loop...".to_string());
     let mut click_count = use_signal(|| 0u32);
-    let mut input_text = use_signal(|| String::new());
+    let mut input_text = use_signal(String::new);
     let mut is_focused = use_signal(|| false);
     let mut is_hovered = use_signal(|| false);
     let mut is_pressed = use_signal(|| false);
