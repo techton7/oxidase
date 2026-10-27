@@ -9,8 +9,8 @@ description = "High-performance browser FFI runtime engine for Dioxus"
 readme = "../../README.md"
 
 [dependencies]
-oxidase-macro = { path = "../oxidase-macro", version = "0.2.0" }
-oxidase-floating-ui = { path = "../oxidase-floating-ui", version = "0.2.0" }
+oxidase-macro = { path = "../oxidase-macro", version = "0.2.1" }
+oxidase-floating-ui = { path = "../oxidase-floating-ui", version = "0.2.1" }
 
 dioxus.workspace = true
 serde.workspace = true
@@ -44,12 +44,12 @@ js-sys = "0.3"
 wasm-bindgen = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-blitz-dom = { version = "0.3.0-beta.4", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6", optional = true }
-blitz-shell = { version = "0.3.0-beta.4", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6", optional = true }
-blitz-traits = { version = "0.3.0-beta.4", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6", optional = true }
+blitz-dom = { version = "0.3.0-beta.4", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7", optional = true }
+blitz-shell = { version = "0.3.0-beta.4", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7", optional = true }
+blitz-traits = { version = "0.3.0-beta.4", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7", optional = true }
 anyrender_vello = { version = "0.15.0", optional = true }
 blitz-host = { version = "0.2.0", git = "https://github.com/techton7/blitz-host.git", tag = "blitz-host-v0.2.0", features = ["dioxus-native"], optional = true }
-dioxus-native = { version = "0.7.0", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6", optional = true }
+dioxus-native = { version = "0.7.0", git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7", optional = true }
 
 
 [features]

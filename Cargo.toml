@@ -10,7 +10,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/techton7/oxidase"
@@ -36,12 +36,12 @@ blitz-host-bridge = { path = "../blitz-host/crates/blitz-host-bridge" }
 blitz-host-protocol = { path = "../blitz-host/crates/blitz-host-protocol" }
 
 [patch.crates-io]
-blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6" }
-blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6" }
-blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6" }
-blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6" }
-dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6" }
-dioxus-native-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.6" }
+blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7" }
+blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7" }
+blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7" }
+blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7" }
+dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7" }
+dioxus-native-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.2.7" }
 wgpu_context = { git = "https://github.com/techton7/anyrender", tag = "wgpu_context-v0.9.1-win-policy" }
 
 [profile.dev.package."*"]
