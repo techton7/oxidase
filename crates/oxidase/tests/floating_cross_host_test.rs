@@ -204,6 +204,7 @@ fn test_multi_ancestor_nested_scroll_recomputation() {
         // Step 3: Mutate inner container scroll
         let inner_el = ctx.doc.element_by_id("inner-scroll").expect("inner-scroll must exist");
         block_on(inner_el.scroll_to(0.0, 25.0)).expect("scroll_to inner must succeed");
+        oxidase::frame::tick(Duration::from_millis(16));
 
         assert_eq!(
             events.borrow().len(),
@@ -231,6 +232,7 @@ fn test_multi_ancestor_nested_scroll_recomputation() {
 
         let outer_el = ctx.doc.element_by_id("outer-scroll").expect("outer-scroll must exist");
         block_on(outer_el.scroll_to(10.0, 35.0)).expect("scroll_to outer must succeed");
+        oxidase::frame::tick(Duration::from_millis(16));
 
         assert_eq!(
             events.borrow().len(),
@@ -302,6 +304,7 @@ fn test_coalesced_nested_scroll_update() {
         // Mutate BOTH inner and outer containers rapidly without sleeping (< 16ms window)
         block_on(inner_el.scroll_to(0.0, 30.0)).expect("inner scroll");
         block_on(outer_el.scroll_to(15.0, 40.0)).expect("outer scroll");
+        oxidase::frame::tick(Duration::from_millis(16));
 
         // Assert exactly 1 coalesced event is emitted
         assert_eq!(
@@ -376,6 +379,7 @@ fn test_raii_teardown_and_leak_proof_registry_verification() {
             // Active behavioral verification
             let inner_el = ctx.doc.element_by_id("leak-inner").expect("leak-inner exists");
             block_on(inner_el.scroll_to(0.0, 10.0)).expect("scroll inner");
+            oxidase::frame::tick(Duration::from_millis(16));
             assert_eq!(events.borrow().len(), 1, "Active watcher must receive event");
         } // <--- _guard drops here!
 
@@ -406,6 +410,7 @@ fn test_raii_teardown_and_leak_proof_registry_verification() {
 
         block_on(inner_el.scroll_to(0.0, 50.0)).expect("scroll inner after drop");
         block_on(outer_el.scroll_to(0.0, 50.0)).expect("scroll outer after drop");
+        oxidase::frame::tick(Duration::from_millis(16));
 
         assert_eq!(
             events.borrow().len(),

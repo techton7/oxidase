@@ -102,7 +102,47 @@ impl Document {
 
     /// Wires Blitz engine-level capture events and animation completion signals into the Oxidase observer substrate.
     pub fn attach_engine_bridges(&self) {
-        // Reserved for Blitz engine-level capture events and animation completion signals.
+        let Some(base) = self.get_base() else {
+            return;
+        };
+        let weak_inner = Rc::downgrade(&self.inner);
+        base.borrow_mut().set_capture_hook(Some(Rc::new(move |base_doc, event, chain| {
+            let Some(kind) = (match &event.data {
+                DomEventData::PointerDown(_) => Some(crate::dom::observer::CaptureEventKind::PointerDown),
+                DomEventData::FocusIn(_) => Some(crate::dom::observer::CaptureEventKind::FocusIn),
+                DomEventData::KeyDown(key_event) => {
+                    use dioxus::prelude::keyboard_types::Key;
+                    let key = match &key_event.key {
+                        Key::Escape => "Escape".to_string(),
+                        Key::Character(s) => s.clone(),
+                        other => format!("{other:?}"),
+                    };
+                    Some(crate::dom::observer::CaptureEventKind::KeyDown { key })
+                }
+                _ => None,
+            }) else {
+                return;
+            };
+
+            let mut path_ids = Vec::with_capacity(chain.len());
+            for &nid in chain {
+                if let Some(node) = base_doc.get_node(nid)
+                    && let Some(el) = node.element_data()
+                    && let Some(id) = &el.id
+                {
+                    path_ids.push(id.to_string());
+                }
+            }
+
+            if let Some(inner) = weak_inner.upgrade() {
+                let doc = Document {
+                    inner,
+                    authoritative: Rc::new(Cell::new(true)),
+                    last_synced_len: Rc::new(Cell::new(0)),
+                };
+                doc.dispatch_capture_event_with_path(kind, event.target, path_ids);
+            }
+        })));
     }
 
     /// Binds a live window `BaseDocument` to this document handle in-place.
@@ -121,6 +161,14 @@ impl Document {
             base.borrow().is_animating()
         } else {
             false
+        }
+    }
+
+    /// Dispatches a raw UI event into the underlying Blitz BaseDocument's event driver.
+    pub fn handle_ui_event(&self, event: blitz_traits::events::UiEvent) {
+        if let Some(base) = self.get_base() {
+            use blitz_dom::Document as _;
+            base.borrow_mut().handle_ui_event(event);
         }
     }
 

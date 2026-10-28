@@ -1,12 +1,10 @@
 #![cfg(feature = "native")]
 
-#[cfg(any())]
-use blitz_dom::dom_events::{
+use blitz_traits::events::{
     BlitzKeyEvent, BlitzPointerEvent, BlitzPointerId, KeyState, MouseEventButton,
     MouseEventButtons, PointerCoords, PointerDetails, UiEvent,
 };
-#[cfg(any())]
-use blitz_dom::keyboard_types::{Code, Key, Location, Modifiers};
+use dioxus::prelude::keyboard_types::{Code, Key, Location, Modifiers};
 use blitz_dom::{Attribute, BaseDocument, DocumentConfig, QualName, local_name, ns};
 use oxidase::dom::observer::{
     observe_capture_events, observe_element_resize, observe_element_scroll,
@@ -366,9 +364,10 @@ fn test_watch_floating_auto_update_frame_coalescing() {
         })
         .expect("watch_floating_auto_update must succeed");
 
-        // 1. Initial size change emits update
+        // 1. Initial size change emits update on frame tick
         ctx.update_element_layout(anchor_id, 50.0, 50.0, 120.0, 40.0);
         ctx.doc.notify_layout_observers();
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
         assert_eq!(updates.borrow().len(), 1);
         assert_eq!(updates.borrow()[0], FloatingAutoUpdateEvent::Update);
 
@@ -390,9 +389,9 @@ fn test_watch_floating_auto_update_frame_coalescing() {
         );
         assert_eq!(updates.borrow()[1], FloatingAutoUpdateEvent::Update);
 
-        // 3. Scroll event emission when viewport/ancestor scroll changes after throttle window
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        // 3. Scroll event emission when viewport/ancestor scroll changes
         ctx.doc.set_viewport_scroll(10.0, 50.0);
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
         assert_eq!(updates.borrow().len(), 3);
         assert_eq!(updates.borrow()[2], FloatingAutoUpdateEvent::Scroll);
     });
@@ -414,8 +413,9 @@ fn test_watch_floating_auto_update_trailing_frame_settling() {
         })
         .expect("watch_floating_auto_update must succeed");
 
-        // 1. Initial event fired immediately (leading emit: Scroll)
+        // 1. Initial event fired on frame tick (leading emit: Scroll)
         ctx.doc.set_viewport_scroll(10.0, 20.0);
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
         assert_eq!(updates.borrow().len(), 1);
         assert_eq!(updates.borrow()[0], FloatingAutoUpdateEvent::Scroll);
 
@@ -477,6 +477,7 @@ fn test_watch_floating_auto_update_reentrancy_safe() {
         // 1. Initial size change triggers leading callback, which mutates bounds re-entrantly
         ctx.update_element_layout(anchor_id, 50.0, 50.0, 130.0, 40.0);
         ctx.doc.notify_layout_observers();
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         assert_eq!(
             events.borrow().len(),
@@ -516,6 +517,7 @@ fn test_watch_floating_auto_update_cancellation_cancels_trailing() {
         // 1. Initial event
         ctx.update_element_layout(anchor_id, 50.0, 50.0, 120.0, 40.0);
         ctx.doc.notify_layout_observers();
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
         assert_eq!(updates.borrow().len(), 1);
 
         // 2. Second event within 16ms window queues trailing frame
@@ -734,8 +736,6 @@ fn test_watcher_guard_manual_stop_unregisters_immediately() {
 }
 
 // 11. Gap 1 Live Engine Proof: Live OS UiEvent routing through Blitz EventDriver into watch_document_dismiss
-// (Gated until Blitz EventDriver bridge is restored following blitz-dom 0.3.0 event refactoring)
-#[cfg(any())]
 #[test]
 fn test_live_blitz_input_capture_pointer_and_keyboard() {
     let ctx = TestContext::new();
@@ -956,6 +956,7 @@ fn test_watch_floating_auto_update_nested_ancestor_scroll() {
         // Scroll the ancestor element container
         let container_el = ctx.doc.element_by_id("scroll-box").expect("scroll-box element must exist");
         block_on(container_el.scroll_to(0.0, 50.0)).expect("element scroll_to must succeed");
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         let events = updates.borrow();
         assert_eq!(events.len(), 1, "Ancestor container scroll must emit FloatingAutoUpdateEvent::Scroll");
@@ -985,6 +986,7 @@ fn test_watch_floating_auto_update_ancestor_deduplication() {
         // Scroll the shared ancestor container once
         let container_el = ctx.doc.element_by_id("shared-ancestor").expect("shared-ancestor must exist");
         block_on(container_el.scroll_to(0.0, 30.0)).expect("element scroll_to must succeed");
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         let events = updates.borrow();
         assert_eq!(
@@ -1052,6 +1054,7 @@ fn test_watch_floating_auto_update_guard_cleanup() {
 
             let container_el = ctx.doc.element_by_id("clean-scroll").expect("clean-scroll must exist");
             block_on(container_el.scroll_to(0.0, 20.0)).expect("scroll_to must succeed");
+            oxidase::frame::tick(std::time::Duration::from_millis(16));
             assert_eq!(*counter.borrow(), 1, "Active watcher must receive scroll event");
         } // _guard drops here and cleans up all inner scroll & resize listeners
 
@@ -1059,6 +1062,7 @@ fn test_watch_floating_auto_update_guard_cleanup() {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let container_el = ctx.doc.element_by_id("clean-scroll").expect("clean-scroll must exist");
         block_on(container_el.scroll_to(0.0, 80.0)).expect("scroll_to must succeed");
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         assert_eq!(
             *counter.borrow(),

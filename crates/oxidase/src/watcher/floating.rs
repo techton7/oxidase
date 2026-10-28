@@ -8,28 +8,8 @@ use crate::watcher_guard::WatcherGuard;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
-#[cfg(target_arch = "wasm32")]
-#[inline]
-fn now_ms() -> f64 {
-    web_sys::window()
-        .and_then(|w| w.performance())
-        .map(|p| p.now())
-        .unwrap_or_else(js_sys::Date::now)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-static PROCESS_START: std::sync::LazyLock<std::time::Instant> =
-    std::sync::LazyLock::new(std::time::Instant::now);
-
-#[cfg(not(target_arch = "wasm32"))]
-#[inline]
-fn now_ms() -> f64 {
-    PROCESS_START.elapsed().as_secs_f64() * 1000.0
-}
 
 struct CoalesceState {
-    last_emit_ms: Option<f64>,
-    frame_window_ms: f64,
     is_emitting: bool,
     pending_trailing: Option<FloatingAutoUpdateEvent>,
     trailing_guard: Option<crate::frame::FrameRequestGuard>,
@@ -71,7 +51,6 @@ fn schedule_trailing_frame(
             return;
         };
 
-        let now = now_ms();
         let trailing_event = {
             let mut s = state_rc.borrow_mut();
             if s.cancelled {
@@ -79,11 +58,10 @@ fn schedule_trailing_frame(
                 s.pending_trailing = None;
                 return;
             }
-            s.trailing_guard = None;
             let Some(event) = s.pending_trailing.take() else {
+                s.trailing_guard = None;
                 return;
             };
-            s.last_emit_ms = Some(now);
             s.is_emitting = true;
             event
         };
@@ -97,8 +75,9 @@ fn schedule_trailing_frame(
             }
         }
 
-        let s = state_rc.borrow_mut();
-        if !s.cancelled && s.pending_trailing.is_some() && s.trailing_guard.is_none() {
+        let mut s = state_rc.borrow_mut();
+        s.trailing_guard = None;
+        if !s.cancelled && s.pending_trailing.is_some() {
             drop(s);
             schedule_trailing_frame(&state_rc, &handler_rc);
         }
@@ -215,8 +194,6 @@ pub fn watch_floating_auto_update_with_options(
     let sub_id = crate::internal::next_subscription_id();
 
     let state = Rc::new(RefCell::new(CoalesceState {
-        last_emit_ms: None,
-        frame_window_ms: 16.0,
         is_emitting: false,
         pending_trailing: None,
         trailing_guard: None,
@@ -230,43 +207,12 @@ pub fn watch_floating_auto_update_with_options(
         let state = state.clone();
         let handler = handler.clone();
         Rc::new(move |kind: FloatingAutoUpdateEvent| {
-            let now = now_ms();
-            {
-                let mut s = state.borrow_mut();
-                if s.cancelled {
-                    return;
-                }
-
-                let throttled = s.is_emitting
-                    || match s.last_emit_ms {
-                        Some(last) => (now - last) < s.frame_window_ms,
-                        None => false,
-                    };
-
-                if throttled {
-                    merge_event(&mut s.pending_trailing, kind);
-                    if s.trailing_guard.is_none() {
-                        drop(s);
-                        schedule_trailing_frame(&state, &handler);
-                    }
-                    return;
-                }
-
-                s.last_emit_ms = Some(now);
-                s.is_emitting = true;
+            let mut s = state.borrow_mut();
+            if s.cancelled {
+                return;
             }
-
-            {
-                let _guard = EmittingGuard {
-                    state: state.clone(),
-                };
-                if let Ok(mut h) = handler.try_borrow_mut() {
-                    h(kind);
-                }
-            }
-
-            let s = state.borrow_mut();
-            if !s.cancelled && s.pending_trailing.is_some() && s.trailing_guard.is_none() {
+            merge_event(&mut s.pending_trailing, kind);
+            if s.trailing_guard.is_none() {
                 drop(s);
                 schedule_trailing_frame(&state, &handler);
             }
@@ -375,12 +321,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_monotonic_clock_progression() {
-        let t1 = now_ms();
-        assert!(t1 >= 0.0);
-    }
-
-    #[test]
     fn test_event_merge_semantics_update_dominates_scroll() {
         let mut evt = None;
         merge_event(&mut evt, FloatingAutoUpdateEvent::Scroll);
@@ -401,8 +341,6 @@ mod tests {
     #[test]
     fn test_emitting_guard_drop_resets_flag() {
         let state = Rc::new(RefCell::new(CoalesceState {
-            last_emit_ms: None,
-            frame_window_ms: 16.0,
             is_emitting: true,
             pending_trailing: None,
             trailing_guard: None,
