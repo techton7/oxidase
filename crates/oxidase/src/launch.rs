@@ -55,14 +55,11 @@ pub fn step_hosted_frame() -> std::time::Duration {
 ///
 /// Wraps `children` in a container (`div` with `display: contents;`) to capture the live window's
 /// `NodeHandle` on mount and bind its `BaseDocument` via `Document::bind_live_base`.
-///
-/// When the `blitz-host` feature is enabled on `oxidase`, additionally wraps in
-/// `<blitz_host::BlitzHost>` to service control requests and synthetic actions.
 #[component]
 pub fn HostedRootWrapper(children: Element) -> Element {
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     {
-        let wrapped_children = rsx! {
+        rsx! {
             div {
                 style: "display: contents;",
                 onmounted: move |evt: Event<MountedData>| {
@@ -80,46 +77,11 @@ pub fn HostedRootWrapper(children: Element) -> Element {
                 },
                 {children}
             }
-        };
-
-        #[cfg(feature = "blitz-host")]
-        {
-            rsx! {
-                ::blitz_host::BlitzHost {
-                    {wrapped_children}
-                }
-            }
-        }
-        #[cfg(not(feature = "blitz-host"))]
-        {
-            wrapped_children
         }
     }
     #[cfg(not(all(not(target_arch = "wasm32"), feature = "native")))]
     {
         children
-    }
-}
-
-/// Automatically initializes `blitz-host` debug control if the `blitz-host` feature
-/// is enabled on `oxidase`.
-pub fn init_debug_control_if_available() {
-    #[cfg(feature = "blitz-host")]
-    {
-        ::blitz_host::init_default();
-    }
-}
-
-
-/// Returns whether `blitz-host` debug control is currently active in the running process.
-pub fn is_debug_control_active() -> bool {
-    #[cfg(feature = "blitz-host")]
-    {
-        ::blitz_host::HostControl::is_global_active()
-    }
-    #[cfg(not(feature = "blitz-host"))]
-    {
-        false
     }
 }
 

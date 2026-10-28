@@ -23,5 +23,4 @@ pub use crate::watcher::{
     FormResetOptions, PresenceEvent, PresenceEventPayload, PresenceFallbackReason,
     PresenceMonitorFallback, PresenceOptions,
 };
-pub use crate::launch::is_debug_control_active;
 pub use oxidase_macro::{bind_js, main};

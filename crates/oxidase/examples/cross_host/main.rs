@@ -3,7 +3,6 @@
 //! Demonstrates a single, unified Dioxus application code path running identically across:
 //! - **Web (`wasm32-unknown-unknown`)**: Driven by browser `requestAnimationFrame` and `web-sys::Document`.
 //! - **Native Desktop (macOS/Linux/Windows)**: Driven by Blitz 0.3.0 / Vello GPU VSync and native `BaseDocument`.
-//! - **Native Debug Control**: When built with the `blitz-host` feature, debug control is automatically available with zero app-level boilerplate.
 //!
 //! ## Key `oxidase` Capabilities Demonstrated:
 //! 1. `#[oxidase::main]` unified entrypoint macro.
@@ -103,17 +102,6 @@ fn App() -> Element {
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "native")))]
     let platform_badge = "Host";
 
-    let is_debug_control = {
-        #[cfg(feature = "blitz-host")]
-        {
-            is_debug_control_active()
-        }
-        #[cfg(not(feature = "blitz-host"))]
-        {
-            false
-        }
-    };
-
     rsx! {
         div {
             style: "width: 100vw; min-height: 100vh; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px 20px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center;",
@@ -129,12 +117,6 @@ fn App() -> Element {
                         p { style: "margin: 4px 0 0; font-size: 13px; color: #94a3b8;", "Universal Web & Native Dioxus Hosted Runtime" }
                     }
                     div { style: "display: flex; gap: 8px; align-items: center;",
-                        if is_debug_control {
-                            div {
-                                style: "background: #7c3aed; color: #ede9fe; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;",
-                                "Debug Control"
-                            }
-                        }
                         div {
                             id: "platform-badge",
                             style: "background: #0284c7; color: white; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 600;",

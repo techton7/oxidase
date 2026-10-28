@@ -70,7 +70,6 @@ fn rewrite_launch_expr(expr: &mut syn::Expr, is_headless: bool) -> bool {
                                     }
                                 }
 
-                                ::oxidase::launch::init_debug_control_if_available();
                                 ::dioxus_native::launch(__OxidaseNativeHostedRoot);
                             }
                         });

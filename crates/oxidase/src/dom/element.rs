@@ -80,7 +80,9 @@ impl Element {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let base = doc.borrow();
+                let Ok(base) = doc.try_borrow() else {
+                    return Ok(None);
+                };
                 let Some(node) = base.get_node(*node_id) else {
                     return Ok(None);
                 };
@@ -230,7 +232,9 @@ impl Element {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, .. } => {
                 if let Some(rect) = self.client_rect().await? {
-                    let mut base = doc.borrow_mut();
+                    let Ok(mut base) = doc.try_borrow_mut() else {
+                        return Ok(());
+                    };
                     let vp = base.viewport();
                     let cur_scroll = base.viewport_scroll();
                     let scale = (vp.hidpi_scale * vp.zoom).max(0.001) as f64;
@@ -402,7 +406,9 @@ impl Element {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let base = doc.borrow();
+                let Ok(base) = doc.try_borrow() else {
+                    return None;
+                };
                 let node = base.get_node(*node_id)?;
                 let elem = node.element_data()?;
                 elem.attrs
@@ -424,7 +430,9 @@ impl Element {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let mut base = doc.borrow_mut();
+                let Ok(mut base) = doc.try_borrow_mut() else {
+                    return;
+                };
                 let qname = blitz_dom::QualName::new(
                     None,
                     blitz_dom::ns!(),
@@ -448,7 +456,9 @@ impl Element {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let mut base = doc.borrow_mut();
+                let Ok(mut base) = doc.try_borrow_mut() else {
+                    return;
+                };
                 let qname = blitz_dom::QualName::new(
                     None,
                     blitz_dom::ns!(),
@@ -472,7 +482,9 @@ impl Element {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let base = doc.borrow();
+                let Ok(base) = doc.try_borrow() else {
+                    return false;
+                };
                 let Some(node) = base.get_node(*node_id) else {
                     return false;
                 };

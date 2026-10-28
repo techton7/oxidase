@@ -221,7 +221,9 @@ impl Document {
         let Some(base) = self.get_base() else {
             return (0.0, 0.0);
         };
-        let base = base.borrow();
+        let Ok(base) = base.try_borrow() else {
+            return (0.0, 0.0);
+        };
         let vp = base.viewport();
         let scale = (vp.hidpi_scale * vp.zoom).max(0.001) as f64;
         (vp.window_size.0 as f64 / scale, vp.window_size.1 as f64 / scale)
@@ -232,7 +234,10 @@ impl Document {
         let Some(base) = self.get_base() else {
             return (0.0, 0.0);
         };
-        let scroll = base.borrow().viewport_scroll();
+        let Ok(base) = base.try_borrow() else {
+            return (0.0, 0.0);
+        };
+        let scroll = base.viewport_scroll();
         (scroll.x, scroll.y)
     }
 
@@ -241,7 +246,9 @@ impl Document {
         let Some(base) = self.get_base() else {
             return crate::runtime::geometry::Viewport::default();
         };
-        let base = base.borrow();
+        let Ok(base) = base.try_borrow() else {
+            return crate::runtime::geometry::Viewport::default();
+        };
         let vp = base.viewport();
         let scroll = base.viewport_scroll();
         let scale = (vp.hidpi_scale * vp.zoom).max(0.001) as f64;
@@ -259,7 +266,9 @@ impl Document {
     /// layout coordinates over the ancestor hierarchy and accounting for viewport scroll.
     pub fn measure_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
         let base_rc = self.get_base()?;
-        let base = base_rc.borrow();
+        let Ok(base) = base_rc.try_borrow() else {
+            return None;
+        };
         let node_id = base.get_element_by_id(element_id)?;
         let node = base.get_node(node_id)?;
         let layout = node.final_layout();
@@ -297,7 +306,9 @@ impl Document {
         let base = self
             .get_base()
             .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
-        let mut base_mut = base.borrow_mut();
+        let Ok(mut base_mut) = base.try_borrow_mut() else {
+            return Ok(());
+        };
         let node_id = base_mut
             .get_element_by_id(element_id)
             .ok_or_else(|| crate::error::HostError::ElementNotFound(element_id.to_string()))?;

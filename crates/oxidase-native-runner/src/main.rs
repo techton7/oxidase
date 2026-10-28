@@ -40,8 +40,6 @@ fn is_debug_profile() -> bool {
 
 #[oxidase::main]
 fn main() {
-    let is_debug_control = is_debug_control_active();
-
     println!("=================================================================");
     println!("[oxidase-native-runner] Launching Native Hosted Frame Test Runner");
     println!("  • Core Framework: Dioxus 0.7.10");
@@ -50,14 +48,9 @@ fn main() {
     println!("  • Bootstrap     : #[oxidase::main] (Zero-Wiring Hosted Frame Loop)");
     println!("  • Mode          : {}", if is_interactive_mode() {
         "Interactive"
-    } else if is_debug_control {
-        "Debug Control Proof (up to 300 frames)"
     } else {
         "Auto-Close Proof (20 frames)"
     });
-    if is_debug_control {
-        println!("  • Debug Control : ACTIVE (blitz-host feature enabled)");
-    }
 
     if is_debug_profile() {
         println!("  • Build Profile : Debug (Unoptimized, ~20 FPS expected)");
@@ -73,7 +66,6 @@ fn main() {
 #[component]
 fn App() -> Element {
     let is_interactive = use_hook(is_interactive_mode);
-    let is_debug_control = use_hook(is_debug_control_active);
 
     // Document context is automatically provided by #[oxidase::main] bootstrap
     let doc = Document::current().expect("Document::current() must be active via #[oxidase::main]");
@@ -87,12 +79,12 @@ fn App() -> Element {
     let mut total_duration = use_signal(|| Duration::ZERO);
     let mut last_dt = use_signal(|| Duration::ZERO);
     let mut status_msg = use_signal(|| "Starting VSync Frame Loop...".to_string());
-    let mut click_count = use_signal(|| 0u32);
-    let mut input_text = use_signal(|| String::new());
-    let mut is_focused = use_signal(|| false);
-    let mut is_hovered = use_signal(|| false);
-    let mut is_pressed = use_signal(|| false);
-    let mut scroll_pos = use_signal(|| 0.0f64);
+    let click_count = use_signal(|| 0u32);
+    let input_text = use_signal(String::new);
+    let is_focused = use_signal(|| false);
+    let is_hovered = use_signal(|| false);
+    let is_pressed = use_signal(|| false);
+    let scroll_pos = use_signal(|| 0.0f64);
 
     // High-Level DX 1: next_frame().await in async block
     use_future(move || async move {
@@ -126,7 +118,7 @@ fn App() -> Element {
         }
 
         // Auto-close proof check
-        let max_frames = if is_debug_control { 300 } else { 20 };
+        let max_frames = 20;
         if !is_interactive && count >= max_frames {
             println!("-----------------------------------------------------------------");
             println!("[oxidase-native-runner] PROOF COMPLETED SUCCESSFULLY!");
@@ -135,9 +127,6 @@ fn App() -> Element {
             println!("  3. [PROVEN] Zero-wiring hosted frame loop active via #[oxidase::main] bootstrap");
             println!("  4. [PROVEN] WindowEvent::RedrawRequested automatically driving step_hosted_frame()");
             println!("  5. [PROVEN] {} real frames executed via use_frame / next_frame without manual app wiring", count);
-            if is_debug_control {
-                println!("  6. [PROVEN] blitz-host control plane active and serviced on UI thread");
-            }
             println!("=================================================================");
             std::process::exit(0);
         }
@@ -159,12 +148,6 @@ fn App() -> Element {
                         p { style: "margin: 4px 0 0; font-size: 13px; color: #94a3b8;", "End-to-End Winit RedrawRequested VSync Proof" }
                     }
                     div { style: "display: flex; gap: 8px; align-items: center;",
-                        if is_debug_control {
-                            div {
-                                style: "background: #7c3aed; color: #ede9fe; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;",
-                                "Debug Control"
-                            }
-                        }
                         if is_debug {
                             div {
                                 style: "background: #b45309; color: #fef3c7; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;",
@@ -209,10 +192,7 @@ fn App() -> Element {
                     p { style: "margin: 0 0 4px 0;", "✔ 2. oxidase::dom::Document::current() active" }
                     p { style: "margin: 0 0 4px 0;", "✔ 3. dioxus_native::use_window_event hooked" }
                     p { style: "margin: 0 0 4px 0;", "✔ 4. WindowEvent::RedrawRequested driving step_hosted_frame()" }
-                    p { style: "margin: 0 0 4px 0;", "✔ 5. Real frame callbacks ticking in hosted native runtime" }
-                    if is_debug_control {
-                        p { style: "margin: 0; color: #a855f7; font-weight: 600;", "✔ 6. blitz-host local debug control plane attached & inspected" }
-                    }
+                    p { style: "margin: 0;", "✔ 5. Real frame callbacks ticking in hosted native runtime" }
                 }
             }
         }
