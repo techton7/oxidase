@@ -226,55 +226,72 @@ impl Element {
     /// Scrolls the element into the visible viewport with specific options.
     pub async fn scroll_into_view_with_options(
         &self,
-        _options: ScrollIntoViewOptions,
+        options: ScrollIntoViewOptions,
     ) -> Result<(), HostError> {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-            ElementTarget::Native { doc, .. } => {
-                if let Some(rect) = self.client_rect().await? {
-                    let Ok(mut base) = doc.try_borrow_mut() else {
-                        return Ok(());
-                    };
-                    let vp = base.viewport();
-                    let cur_scroll = base.viewport_scroll();
-                    let scale = (vp.hidpi_scale * vp.zoom).max(0.001) as f64;
-                    let win_w = vp.window_size.0 as f64 / scale;
-                    let win_h = vp.window_size.1 as f64 / scale;
-
-                    let mut target_y = cur_scroll.y;
-                    if rect.y < 0.0 {
-                        target_y += rect.y;
-                    } else if rect.bottom > win_h {
-                        target_y += rect.bottom - win_h;
-                    }
-
-                    let mut target_x = cur_scroll.x;
-                    if rect.x < 0.0 {
-                        target_x += rect.x;
-                    } else if rect.right > win_w {
-                        target_x += rect.right - win_w;
-                    }
-
-                    base.set_viewport_scroll(blitz_dom::Point {
-                        x: target_x,
-                        y: target_y,
-                    });
-                }
+            ElementTarget::Native { doc, node_id } => {
+                let Ok(mut base) = doc.try_borrow_mut() else {
+                    return Ok(());
+                };
+                let behavior = match options.behavior {
+                    ScrollBehavior::Auto => blitz_dom::ScrollBehavior::Auto,
+                    ScrollBehavior::Instant => blitz_dom::ScrollBehavior::Instant,
+                    ScrollBehavior::Smooth => blitz_dom::ScrollBehavior::Smooth,
+                };
+                let block = match options.block {
+                    ScrollLogicalPosition::Start => blitz_dom::ScrollLogicalPosition::Start,
+                    ScrollLogicalPosition::Center => blitz_dom::ScrollLogicalPosition::Center,
+                    ScrollLogicalPosition::End => blitz_dom::ScrollLogicalPosition::End,
+                    ScrollLogicalPosition::Nearest => blitz_dom::ScrollLogicalPosition::Nearest,
+                };
+                let inline = match options.inline {
+                    ScrollLogicalPosition::Start => blitz_dom::ScrollLogicalPosition::Start,
+                    ScrollLogicalPosition::Center => blitz_dom::ScrollLogicalPosition::Center,
+                    ScrollLogicalPosition::End => blitz_dom::ScrollLogicalPosition::End,
+                    ScrollLogicalPosition::Nearest => blitz_dom::ScrollLogicalPosition::Nearest,
+                };
+                base.scroll_into_view(*node_id, behavior, block, inline);
                 Ok(())
             }
             #[cfg(target_arch = "wasm32")]
             ElementTarget::Web(el) => {
-                el.scroll_into_view();
+                let web_options = web_sys::ScrollIntoViewOptions::new();
+                web_options.set_behavior(match options.behavior {
+                    ScrollBehavior::Auto => web_sys::ScrollBehavior::Auto,
+                    ScrollBehavior::Instant => web_sys::ScrollBehavior::Instant,
+                    ScrollBehavior::Smooth => web_sys::ScrollBehavior::Smooth,
+                });
+                web_options.set_block(match options.block {
+                    ScrollLogicalPosition::Start => web_sys::ScrollLogicalPosition::Start,
+                    ScrollLogicalPosition::Center => web_sys::ScrollLogicalPosition::Center,
+                    ScrollLogicalPosition::End => web_sys::ScrollLogicalPosition::End,
+                    ScrollLogicalPosition::Nearest => web_sys::ScrollLogicalPosition::Nearest,
+                });
+                web_options.set_inline(match options.inline {
+                    ScrollLogicalPosition::Start => web_sys::ScrollLogicalPosition::Start,
+                    ScrollLogicalPosition::Center => web_sys::ScrollLogicalPosition::Center,
+                    ScrollLogicalPosition::End => web_sys::ScrollLogicalPosition::End,
+                    ScrollLogicalPosition::Nearest => web_sys::ScrollLogicalPosition::Nearest,
+                });
+                el.scroll_into_view_with_scroll_into_view_options(&web_options);
                 Ok(())
             }
             ElementTarget::Mounted(handle) => {
-                let _ = handle
-                    .scroll_to(dioxus::prelude::ScrollBehavior::Instant)
-                    .await;
+                let behavior = match options.behavior {
+                    ScrollBehavior::Smooth => dioxus::prelude::ScrollBehavior::Smooth,
+                    ScrollBehavior::Auto | ScrollBehavior::Instant => {
+                        dioxus::prelude::ScrollBehavior::Instant
+                    }
+                };
+                let _ = handle.scroll_to(behavior).await;
                 Ok(())
             }
             #[cfg(not(target_arch = "wasm32"))]
-            ElementTarget::Mock => Ok(()),
+            ElementTarget::Mock => {
+                let _ = options;
+                Ok(())
+            }
         }
     }
 
@@ -552,6 +569,7 @@ pub struct ScrollIntoViewOptions {
 pub enum ScrollBehavior {
     #[default]
     Auto,
+    Instant,
     Smooth,
 }
 
@@ -571,9 +589,17 @@ mod tests {
 
     #[test]
     fn test_element_debug_and_options() {
-        let opts = ScrollIntoViewOptions::default();
+        let mut opts = ScrollIntoViewOptions::default();
         assert_eq!(opts.behavior, ScrollBehavior::Auto);
         assert_eq!(opts.block, ScrollLogicalPosition::Start);
+        assert_eq!(opts.inline, ScrollLogicalPosition::Start);
+
+        opts.behavior = ScrollBehavior::Instant;
+        opts.block = ScrollLogicalPosition::Center;
+        opts.inline = ScrollLogicalPosition::End;
+        assert_eq!(opts.behavior, ScrollBehavior::Instant);
+        assert_eq!(opts.block, ScrollLogicalPosition::Center);
+        assert_eq!(opts.inline, ScrollLogicalPosition::End);
 
         #[cfg(not(target_arch = "wasm32"))]
         {

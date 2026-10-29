@@ -154,6 +154,12 @@ fn test_element_direct_geometry_and_scrolling() {
 
         // scroll_into_view
         block_on(element.scroll_into_view()).expect("scroll_into_view failed");
+        block_on(element.scroll_into_view_with_options(ScrollIntoViewOptions {
+            behavior: ScrollBehavior::Instant,
+            block: ScrollLogicalPosition::Center,
+            inline: ScrollLogicalPosition::Nearest,
+        }))
+        .expect("scroll_into_view_with_options failed");
     });
 }
 
