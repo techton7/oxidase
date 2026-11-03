@@ -27,25 +27,37 @@ pub fn measure_node_rect(base: &BaseDocument, node_id: NodeId) -> Option<Rect> {
     let mut x = layout.location.x as f64;
     let mut y = layout.location.y as f64;
 
-    let root_id = base.root_node().id;
-    let mut current_parent = node.parent;
-    while let Some(parent_id) = current_parent {
-        if parent_id == root_id {
-            break;
+    let is_target_fixed = node.taffy_position() == blitz_dom::taffy::Position::Fixed;
+    if !is_target_fixed {
+        let root_id = base.root_node().id;
+        let mut current_parent = node.parent;
+        let mut hit_fixed_ancestor = false;
+        while let Some(parent_id) = current_parent {
+            if parent_id == root_id {
+                break;
+            }
+            if let Some(parent_node) = base.get_node(parent_id) {
+                let parent_layout = parent_node.final_layout();
+                if parent_node.taffy_position() == blitz_dom::taffy::Position::Fixed {
+                    x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
+                    y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
+                    hit_fixed_ancestor = true;
+                    break;
+                }
+                x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
+                y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
+                current_parent = parent_node.parent;
+            } else {
+                break;
+            }
         }
-        if let Some(parent_node) = base.get_node(parent_id) {
-            let parent_layout = parent_node.final_layout();
-            x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
-            y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
-            current_parent = parent_node.parent;
-        } else {
-            break;
+
+        if !hit_fixed_ancestor {
+            let vp_scroll = base.viewport_scroll();
+            x -= vp_scroll.x;
+            y -= vp_scroll.y;
         }
     }
-
-    let vp_scroll = base.viewport_scroll();
-    x -= vp_scroll.x;
-    y -= vp_scroll.y;
 
     Some(Rect::new(x, y, width, height))
 }

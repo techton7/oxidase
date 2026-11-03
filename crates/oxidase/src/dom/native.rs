@@ -49,12 +49,22 @@ pub fn extract_base_doc(handle: &dioxus_native::NodeHandle) -> Rc<RefCell<BaseDo
 impl Document {
     /// Returns the active native Blitz document if available in current thread or Dioxus context.
     pub fn current() -> Option<Self> {
-        // 1. Check Dioxus root context if running within an active Dioxus runtime
-        if dioxus::core::Runtime::try_current().is_some()
-            && let Some(doc) = dioxus::prelude::try_consume_context::<Document>()
-                && doc.get_base().is_some() {
-                    return Some(doc);
-                }
+        // 1. Check Dioxus context if running within an active Dioxus runtime
+        if let Some(rt) = dioxus::core::Runtime::try_current() {
+            let doc = if rt.try_current_scope_id().is_some() {
+                dioxus::prelude::try_consume_context::<Document>()
+            } else {
+                rt.in_scope(
+                    dioxus::core::ScopeId::ROOT,
+                    dioxus::prelude::try_consume_context::<Document>,
+                )
+            };
+            if let Some(doc) = doc
+                && doc.get_base().is_some()
+            {
+                return Some(doc);
+            }
+        }
 
         // 2. Check thread-local (active during harness dispatch or scoped execution in Blitz)
         if let Some(doc) = CURRENT_NATIVE_DOC.with(|cell| cell.borrow().clone())
@@ -107,9 +117,33 @@ impl Document {
         };
         let weak_inner = Rc::downgrade(&self.inner);
         base.borrow_mut().set_capture_hook(Some(Rc::new(move |base_doc, event, chain| {
+            if let DomEventData::Scroll(_) = &event.data {
+                if let Some(inner) = weak_inner.upgrade() {
+                    let doc = Document {
+                        inner,
+                        authoritative: Rc::new(Cell::new(true)),
+                        last_synced_len: Rc::new(Cell::new(0)),
+                    };
+                    if let Some(node) = base_doc.get_node(event.target)
+                        && let Some(el) = node.element_data()
+                        && let Some(id) = &el.id
+                    {
+                        doc.dispatch_element_scroll(id);
+                    }
+                    doc.dispatch_scroll();
+                }
+                return;
+            }
+
             let Some(kind) = (match &event.data {
                 DomEventData::PointerDown(_) => Some(crate::dom::observer::CaptureEventKind::PointerDown),
-                DomEventData::FocusIn(_) => Some(crate::dom::observer::CaptureEventKind::FocusIn),
+                DomEventData::FocusIn(_) => {
+                    if base_doc.try_root_element().map(|el| el.id) == Some(event.target) {
+                        None
+                    } else {
+                        Some(crate::dom::observer::CaptureEventKind::FocusIn)
+                    }
+                }
                 DomEventData::KeyDown(key_event) => {
                     use dioxus::prelude::keyboard_types::Key;
                     let key = match &key_event.key {
@@ -326,25 +360,37 @@ impl Document {
         let mut x = layout.location.x as f64;
         let mut y = layout.location.y as f64;
 
-        let root_id = base.root_node().id;
-        let mut current_parent = node.parent;
-        while let Some(parent_id) = current_parent {
-            if parent_id == root_id {
-                break;
+        let is_target_fixed = node.taffy_position() == blitz_dom::taffy::Position::Fixed;
+        if !is_target_fixed {
+            let root_id = base.root_node().id;
+            let mut current_parent = node.parent;
+            let mut hit_fixed_ancestor = false;
+            while let Some(parent_id) = current_parent {
+                if parent_id == root_id {
+                    break;
+                }
+                if let Some(parent_node) = base.get_node(parent_id) {
+                    let parent_layout = parent_node.final_layout();
+                    if parent_node.taffy_position() == blitz_dom::taffy::Position::Fixed {
+                        x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
+                        y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
+                        hit_fixed_ancestor = true;
+                        break;
+                    }
+                    x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
+                    y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
+                    current_parent = parent_node.parent;
+                } else {
+                    break;
+                }
             }
-            if let Some(parent_node) = base.get_node(parent_id) {
-                let parent_layout = parent_node.final_layout();
-                x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
-                y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
-                current_parent = parent_node.parent;
-            } else {
-                break;
+
+            if !hit_fixed_ancestor {
+                let vp_scroll = base.viewport_scroll();
+                x -= vp_scroll.x;
+                y -= vp_scroll.y;
             }
         }
-
-        let vp_scroll = base.viewport_scroll();
-        x -= vp_scroll.x;
-        y -= vp_scroll.y;
 
         Some(crate::runtime::geometry::Rect::new(x, y, width, height))
     }
@@ -728,7 +774,9 @@ impl Document {
         let Some(base) = self.get_base() else {
             return;
         };
-        let b = base.borrow();
+        let Ok(b) = base.try_borrow() else {
+            return;
+        };
         if let Some(node) = b.get_node(node_id)
             && let Some(el) = node.element_data()
                 && let Some(id) = &el.id {
