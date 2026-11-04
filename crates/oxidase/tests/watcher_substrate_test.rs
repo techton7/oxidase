@@ -1740,3 +1740,103 @@ fn test_dioxus_document_watch_presence_and_flush_animation_events_coexistence() 
     });
 }
 
+// 22. Layer 2: Floating auto-update native elementResize parity via post-mount layout resolution
+#[test]
+fn test_watch_floating_auto_update_native_post_mount_layout_resolution() {
+    let ctx = TestContext::new();
+    let _anchor_id = ctx.add_element(ctx.root_id, "button", "anchor-btn", 50.0, 50.0, 100.0, 40.0);
+    // Floating content element mounted with zero dimensions (unresolved layout at initial mount)
+    let content_id = ctx.add_element(ctx.root_id, "div", "content-zero", 50.0, 95.0, 0.0, 0.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let u = updates.clone();
+
+        let _guard = watch_floating_auto_update(&["anchor-btn"], "content-zero", move |ev| {
+            u.borrow_mut().push(ev);
+        })
+        .expect("watch_floating_auto_update must succeed");
+
+        assert_eq!(
+            updates.borrow().len(),
+            0,
+            "Initial mount before frame resolve must emit 0 events"
+        );
+
+        // Frame 1: Simulate Blitz inner.resolve() calculating Taffy layout to positive dimensions
+        ctx.update_element_layout(content_id, 50.0, 95.0, 150.0, 200.0);
+
+        // Frame 1 tick executes post-mount resize check callback, detecting width > 0 && height > 0
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
+        // Trailing frame tick delivers the throttled Update event
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
+
+        assert_eq!(
+            updates.borrow().len(),
+            1,
+            "Post-mount layout resolution must emit exactly 1 Update event without user interaction"
+        );
+        assert_eq!(updates.borrow()[0], FloatingAutoUpdateEvent::Update);
+    });
+}
+
+#[test]
+fn test_watch_floating_auto_update_native_post_mount_bounded_loop_cancels() {
+    let ctx = TestContext::new();
+    let _anchor_id = ctx.add_element(ctx.root_id, "button", "anchor-btn", 50.0, 50.0, 100.0, 40.0);
+    let _content_id = ctx.add_element(ctx.root_id, "div", "content-zero-forever", 50.0, 95.0, 0.0, 0.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let u = updates.clone();
+
+        let _guard = watch_floating_auto_update(&["anchor-btn"], "content-zero-forever", move |ev| {
+            u.borrow_mut().push(ev);
+        })
+        .expect("watch_floating_auto_update must succeed");
+
+        // Advance 12 frames without the element ever resolving positive dimensions
+        for _ in 0..12 {
+            oxidase::frame::tick(std::time::Duration::from_millis(16));
+        }
+
+        assert_eq!(
+            updates.borrow().len(),
+            0,
+            "Unresolved content must not emit events and post-mount loop must terminate at bound"
+        );
+    });
+}
+
+#[test]
+fn test_watch_floating_auto_update_native_post_mount_early_guard_drop() {
+    let ctx = TestContext::new();
+    let _anchor_id = ctx.add_element(ctx.root_id, "button", "anchor-btn", 50.0, 50.0, 100.0, 40.0);
+    let content_id = ctx.add_element(ctx.root_id, "div", "content-zero-drop", 50.0, 95.0, 0.0, 0.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let u = updates.clone();
+
+        let guard = watch_floating_auto_update(&["anchor-btn"], "content-zero-drop", move |ev| {
+            u.borrow_mut().push(ev);
+        })
+        .expect("watch_floating_auto_update must succeed");
+
+        // Drop guard early before layout resolution
+        drop(guard);
+
+        // Layout resolves on next frame
+        ctx.update_element_layout(content_id, 50.0, 95.0, 150.0, 200.0);
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
+
+        assert_eq!(
+            updates.borrow().len(),
+            0,
+            "Early guard drop must cancel post-mount resize check loop and emit 0 events"
+        );
+    });
+}
+
+
