@@ -9,8 +9,8 @@ description = "High-performance browser FFI runtime engine for Dioxus"
 readme = "../../README.md"
 
 [dependencies]
-oxidase-macro = { path = "../oxidase-macro", version = "0.3.2" }
-oxidase-floating-ui = { path = "../oxidase-floating-ui", version = "0.3.2" }
+oxidase-macro = { path = "../oxidase-macro", version = "0.3.3" }
+oxidase-floating-ui = { path = "../oxidase-floating-ui", version = "0.3.3" }
 
 dioxus.workspace = true
 serde.workspace = true
