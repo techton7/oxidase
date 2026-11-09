@@ -264,6 +264,12 @@ pub fn step_hosted_frame() -> Duration {
 /// In manual/headless mode, this provides pure deterministic progression for tests, CI,
 /// and simulation environments.
 pub fn tick(dt: Duration) {
+    if let Some(doc) = crate::dom::Document::current()
+        && doc.is_authoritative()
+    {
+        doc.pump_hosted_observers();
+    }
+
     let (now, one_shots, loops) = FRAME_STATE.with(|cell| {
         let mut state = cell.borrow_mut();
         state.now += dt;

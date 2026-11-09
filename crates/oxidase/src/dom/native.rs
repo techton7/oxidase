@@ -563,10 +563,8 @@ impl Document {
                         let changed = if let Some(last) = &obs.last_rect {
                             (last.width - rect.width).abs() > 0.001
                                 || (last.height - rect.height).abs() > 0.001
-                                || (last.x - rect.x).abs() > 0.001
-                                || (last.y - rect.y).abs() > 0.001
                         } else {
-                            true
+                            rect.width > 0.0 && rect.height > 0.0
                         };
                         if changed {
                             obs.last_rect = Some(rect);
@@ -900,7 +898,9 @@ pub(crate) fn observe_element_resize(
         && doc.element_by_id(element_id).is_none() {
             return Err(crate::error::Error::ElementNotFound(element_id.to_string()));
         }
-    let initial_rect = Document::current().and_then(|doc| doc.measure_rect(element_id));
+    let initial_rect = Document::current()
+        .and_then(|doc| doc.measure_rect(element_id))
+        .filter(|r| r.width > 0.0 && r.height > 0.0);
     CURRENT_OBSERVERS.with(|cell| {
         cell.borrow_mut().resize_observers.insert(
             sub_id,

@@ -97,73 +97,6 @@ fn schedule_trailing_frame(
     }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-const MAX_POST_MOUNT_FRAMES: usize = 10;
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-struct PostMountResizeState {
-    content_id: String,
-    remaining_frames: usize,
-    emit: Rc<dyn Fn(FloatingAutoUpdateEvent)>,
-    cancelled: bool,
-}
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-fn schedule_next_post_mount_check(
-    state: &Rc<RefCell<PostMountResizeState>>,
-    guard_cell: &Rc<RefCell<Option<crate::frame::FrameRequestGuard>>>,
-) {
-    let state_weak = Rc::downgrade(state);
-    let guard_cell_weak = Rc::downgrade(guard_cell);
-
-    let guard_res = crate::frame::request_next_frame(move |_frame_info| {
-        let Some(state_rc) = state_weak.upgrade() else {
-            return;
-        };
-        let Some(guard_cell_rc) = guard_cell_weak.upgrade() else {
-            return;
-        };
-
-        let (should_emit, should_retry) = {
-            let mut s = state_rc.borrow_mut();
-            if s.cancelled || s.remaining_frames == 0 {
-                return;
-            }
-            s.remaining_frames -= 1;
-
-            let is_resolved = crate::dom::Document::current()
-                .and_then(|doc| doc.measure_rect(&s.content_id))
-                .map(|r| r.width > 0.0 && r.height > 0.0)
-                .unwrap_or(false);
-
-            if is_resolved {
-                s.remaining_frames = 0;
-                (true, false)
-            } else if s.remaining_frames > 0 {
-                (false, true)
-            } else {
-                (false, false)
-            }
-        };
-
-        if should_emit {
-            let emit_fn = state_rc.borrow().emit.clone();
-            emit_fn(FloatingAutoUpdateEvent::Update);
-        } else if should_retry {
-            schedule_next_post_mount_check(&state_rc, &guard_cell_rc);
-        }
-    });
-
-    if let Ok(guard) = guard_res {
-        let mut g = guard_cell.borrow_mut();
-        if state.borrow().cancelled {
-            drop(guard);
-        } else {
-            *g = Some(guard);
-        }
-    }
-}
-
 /// Notification payload for floating auto-update events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -286,6 +219,43 @@ pub fn watch_floating_auto_update_with_options(
         })
     };
 
+    let emit_content_resize = {
+        let state = state.clone();
+        let handler = handler.clone();
+        let emit_throttled = emit_throttled.clone();
+        Rc::new(move |entry: ResizeEntry| {
+            let mut s = state.borrow_mut();
+            if s.cancelled {
+                return;
+            }
+            // Deliver synchronously on initial positive layout resolution if idle
+            if !s.is_emitting
+                && s.trailing_guard.is_none()
+                && entry.content_rect.width > 0.0
+                && entry.content_rect.height > 0.0
+            {
+                s.is_emitting = true;
+                drop(s);
+                {
+                    let _guard = EmittingGuard {
+                        state: state.clone(),
+                    };
+                    if let Ok(mut h) = handler.try_borrow_mut() {
+                        h(FloatingAutoUpdateEvent::Update);
+                    }
+                }
+                let s = state.borrow();
+                if !s.cancelled && s.pending_trailing.is_some() {
+                    drop(s);
+                    schedule_trailing_frame(&state, &handler);
+                }
+            } else if entry.content_rect.width > 0.0 && entry.content_rect.height > 0.0 {
+                drop(s);
+                emit_throttled(FloatingAutoUpdateEvent::Update);
+            }
+        })
+    };
+
     // 1. Ancestor scroll observation
     let mut deduplicated_ancestor_ids = Vec::new();
     if options.ancestor_scroll {
@@ -341,44 +311,13 @@ pub fn watch_floating_auto_update_with_options(
         }
 
         // Register content resize observer (tolerate missing content)
-        let emit = emit_throttled.clone();
-        match observe_element_resize(&options.content_id, move |_entry: ResizeEntry| {
-            emit(FloatingAutoUpdateEvent::Update);
+        let emit_content = emit_content_resize.clone();
+        match observe_element_resize(&options.content_id, move |entry: ResizeEntry| {
+            emit_content(entry);
         }) {
             Ok(guard) => inner_guards.push(guard),
             Err(crate::error::Error::ElementNotFound(_)) => {}
             Err(e) => return Err(e),
-        }
-
-        #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-        {
-            let initial_is_zero = crate::dom::Document::current()
-                .and_then(|doc| doc.measure_rect(&options.content_id))
-                .map(|r| r.width <= 0.0 || r.height <= 0.0)
-                .unwrap_or(true);
-
-            if initial_is_zero {
-                let post_mount_state = Rc::new(RefCell::new(PostMountResizeState {
-                    content_id: options.content_id.clone(),
-                    remaining_frames: MAX_POST_MOUNT_FRAMES,
-                    emit: emit_throttled.clone(),
-                    cancelled: false,
-                }));
-                let post_mount_guard_cell = Rc::new(RefCell::new(None));
-                schedule_next_post_mount_check(&post_mount_state, &post_mount_guard_cell);
-
-                let state_cancel = post_mount_state.clone();
-                let guard_cancel = post_mount_guard_cell.clone();
-                inner_guards.push(crate::watcher_guard::WatcherGuard::with_cleanup(
-                    "native_post_mount_resize_check",
-                    crate::internal::next_subscription_id(),
-                    None,
-                    move || {
-                        state_cancel.borrow_mut().cancelled = true;
-                        guard_cancel.borrow_mut().take();
-                    },
-                ));
-            }
         }
     }
 
