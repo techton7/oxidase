@@ -4,8 +4,8 @@ use blitz_traits::events::{
     BlitzKeyEvent, BlitzPointerEvent, BlitzPointerId, KeyState, MouseEventButton,
     MouseEventButtons, PointerCoords, PointerDetails, UiEvent,
 };
-use dioxus::prelude::keyboard_types::{Code, Key, Location, Modifiers};
-use blitz_dom::{Attribute, BaseDocument, DocumentConfig, QualName, local_name, ns};
+use dioxus::prelude::keyboard_types::{Code, Key, Location, Modifiers, NamedKey};
+use blitz_dom::{Attribute, BaseDocument, DocumentConfig, QualName, UserAgentStylesheet, local_name, ns};
 use oxidase::dom::observer::{
     observe_capture_events, observe_element_resize, observe_element_scroll,
     observe_form_reset, observe_scroll, observe_transition_lifecycle,
@@ -796,7 +796,7 @@ fn test_live_blitz_input_capture_pointer_and_keyboard() {
 
         // 2. Send live OS Escape keydown
         let key_event = BlitzKeyEvent {
-            key: Key::Escape,
+            key: Key::Named(NamedKey::Escape),
             code: Code::Escape,
             modifiers: Modifiers::empty(),
             location: Location::Standard,
@@ -825,7 +825,7 @@ fn test_live_blitz_animation_completion_dispatch() {
     let _modal_id = ctx.add_element(ctx.root_id, "div", "modal-box", 0.0, 0.0, 200.0, 200.0);
 
     // Add author stylesheet with @keyframes animation
-    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+    ctx.base.borrow_mut().add_user_agent_stylesheet(UserAgentStylesheet::parse(r#"
         @keyframes fade-out {
             from { opacity: 1; }
             to { opacity: 0; }
@@ -833,7 +833,7 @@ fn test_live_blitz_animation_completion_dispatch() {
         #modal-box {
             animation: fade-out 0.1s;
         }
-    "#);
+    "#));
 
     Document::with_current(ctx.doc.clone(), || {
         let presence_events = Rc::new(RefCell::new(Vec::new()));
@@ -879,12 +879,12 @@ fn test_live_blitz_transition_completion_dispatch() {
     let modal_id = ctx.add_element(ctx.root_id, "div", "modal-box", 0.0, 0.0, 200.0, 200.0);
 
     // Set up stylesheet with transition: opacity 0.1s; opacity: 1;
-    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+    ctx.base.borrow_mut().add_user_agent_stylesheet(UserAgentStylesheet::parse(r#"
         #modal-box {
             transition: opacity 0.1s linear;
             opacity: 1;
         }
-    "#);
+    "#));
 
     Document::with_current(ctx.doc.clone(), || {
         let presence_events = Rc::new(RefCell::new(Vec::new()));
@@ -1333,12 +1333,12 @@ fn test_hosted_window_step_hosted_frame_pump_external_animation_completion() {
 
     // 2. Add an element with CSS animation or transition (e.g. opacity transition)
     let target_id = ctx.add_element(ctx.root_id, "div", "target-el", 0.0, 0.0, 200.0, 200.0);
-    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+    ctx.base.borrow_mut().add_user_agent_stylesheet(UserAgentStylesheet::parse(r#"
         #target-el {
             transition: opacity 0.1s linear;
             opacity: 1;
         }
-    "#);
+    "#));
 
     // Initial external resolve at t=0.0 to compute initial styles (opacity: 1)
     ctx.base.borrow_mut().resolve(0.0);
@@ -1433,7 +1433,7 @@ fn test_attribute_toggle_data_state_css_keyframes_animation_presence() {
     let _modal_id = ctx.add_element(ctx.root_id, "div", "anim-state-box", 0.0, 0.0, 200.0, 200.0);
 
     // CSS rule using attribute selector [data-state="closed"] with @keyframes fade-out
-    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+    ctx.base.borrow_mut().add_user_agent_stylesheet(UserAgentStylesheet::parse(r#"
         @keyframes fade-out {
             from { opacity: 1; }
             to { opacity: 0; }
@@ -1444,7 +1444,7 @@ fn test_attribute_toggle_data_state_css_keyframes_animation_presence() {
         [data-state="closed"] {
             animation: fade-out 0.1s;
         }
-    "#);
+    "#));
 
     Document::with_current(ctx.doc.clone(), || {
         let el = ctx
@@ -1504,7 +1504,7 @@ fn test_attribute_toggle_data_state_css_transition_presence() {
     let _modal_id = ctx.add_element(ctx.root_id, "div", "trans-state-box", 0.0, 0.0, 200.0, 200.0);
 
     // CSS rule using attribute selector [data-state="closed"] with transition: opacity 0.1s
-    ctx.base.borrow_mut().add_user_agent_stylesheet(r#"
+    ctx.base.borrow_mut().add_user_agent_stylesheet(UserAgentStylesheet::parse(r#"
         [data-state="open"] {
             opacity: 1;
             transition: opacity 0.1s linear;
@@ -1513,7 +1513,7 @@ fn test_attribute_toggle_data_state_css_transition_presence() {
             opacity: 0;
             transition: opacity 0.1s linear;
         }
-    "#);
+    "#));
 
     Document::with_current(ctx.doc.clone(), || {
         let el = ctx
@@ -1603,7 +1603,7 @@ fn test_dioxus_document_watch_presence_and_flush_animation_events_coexistence() 
     let oxidase_doc = oxidase::dom::Document::from_base(doc.inner.clone());
     oxidase::dom::Document::with_current(oxidase_doc.clone(), || {
         // 4. Inject stylesheet with transition rules
-        doc.inner.borrow_mut().add_user_agent_stylesheet(r#"
+        doc.inner.borrow_mut().add_user_agent_stylesheet(UserAgentStylesheet::parse(r#"
             #coexist-modal {
                 transition: opacity 0.1s linear;
                 opacity: 1;
@@ -1611,7 +1611,7 @@ fn test_dioxus_document_watch_presence_and_flush_animation_events_coexistence() 
             #coexist-modal[data-state="closed"] {
                 opacity: 0;
             }
-        "#);
+        "#));
 
         // 5. Tick initial frame at t=0.0
         oxidase_doc.resolve(0.0);

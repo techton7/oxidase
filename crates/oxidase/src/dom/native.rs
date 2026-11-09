@@ -145,11 +145,11 @@ impl Document {
                     }
                 }
                 DomEventData::KeyDown(key_event) => {
-                    use dioxus::prelude::keyboard_types::Key;
+                    use dioxus::prelude::keyboard_types::{Key, NamedKey};
                     let key = match &key_event.key {
-                        Key::Escape => "Escape".to_string(),
+                        Key::Named(NamedKey::Escape) => "Escape".to_string(),
+                        Key::Named(named) => format!("{named:?}"),
                         Key::Character(s) => s.clone(),
-                        other => format!("{other:?}"),
                     };
                     Some(crate::dom::observer::CaptureEventKind::KeyDown { key })
                 }
