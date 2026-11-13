@@ -737,4 +737,235 @@ mod tests {
             );
         }
     }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    #[test]
+    fn test_native_focus_options_and_focus_visible_parity() {
+        use blitz_dom::{BaseDocument, DocumentConfig, FocusSource, QualName, local_name, ns};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let base_doc = Rc::new(RefCell::new(BaseDocument::new(DocumentConfig::default())));
+        let native_doc = Document::from_base(base_doc.clone());
+
+        let (btn_a_id, btn_b_id) = {
+            let mut base = base_doc.borrow_mut();
+            let root_id = base.root_node().id;
+            let mut mutator = base.mutate();
+            let container = mutator.create_element(
+                QualName::new(None, ns!(html), local_name!("div")),
+                vec![blitz_dom::Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "dialog-box".to_string(),
+                }],
+            );
+            let btn_a = mutator.create_element(
+                QualName::new(None, ns!(html), local_name!("button")),
+                vec![blitz_dom::Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "btn-a".to_string(),
+                }],
+            );
+            let btn_b = mutator.create_element(
+                QualName::new(None, ns!(html), local_name!("button")),
+                vec![blitz_dom::Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "btn-b".to_string(),
+                }],
+            );
+            mutator.append_children(container, &[btn_b]);
+            mutator.append_children(root_id, &[btn_a, container]);
+            (btn_a, btn_b)
+        };
+        native_doc.resolve(0.0);
+
+        let btn_a = native_doc.element_by_id("btn-a").expect("btn-a must exist");
+        let dialog_box = native_doc
+            .element_by_id("dialog-box")
+            .expect("dialog-box must exist");
+        let queried_btn = dialog_box
+            .query_selector("button")
+            .expect("scoped query_selector must find btn-b");
+        assert_eq!(queried_btn.id().as_deref(), Some("btn-b"));
+        assert_eq!(queried_btn.tag_name().as_deref(), Some("button"));
+
+        // 1. Pointer focus clears keyboard modality -> :focus-visible is false
+        base_doc
+            .borrow_mut()
+            .set_focus_to_with_source(btn_a_id, FocusSource::Pointer);
+        assert!(btn_a.has_focus());
+        assert!(!btn_a.matches_focus_visible());
+        assert!(!native_doc.is_element_focus_visible("btn-a"));
+
+        // 2. Programmatic focus with FocusOptions { focus_visible: Some(true) } overrides pointer modality
+        queried_btn
+            .focus_sync_with_options(FocusOptions::with_focus_visible(false, Some(true)))
+            .expect("focus_sync_with_options must succeed");
+        assert!(queried_btn.has_focus());
+        assert!(queried_btn.matches_focus_visible());
+        assert!(native_doc.is_element_focus_visible("btn-b"));
+
+        // 3. Keyboard focus sets keyboard modality -> :focus-visible is true, then FocusOptions { focus_visible: Some(false) } suppresses ring
+        base_doc
+            .borrow_mut()
+            .set_focus_to_with_source(btn_b_id, FocusSource::Keyboard);
+        assert!(queried_btn.matches_focus_visible());
+
+        native_doc
+            .set_focus_with_options(
+                "btn-a",
+                FocusOptions::with_focus_visible(false, Some(false)),
+            )
+            .expect("set_focus_with_options must succeed");
+        assert!(btn_a.has_focus());
+        assert!(
+            !btn_a.matches_focus_visible(),
+            "focus_visible: Some(false) must suppress focus ring even after keyboard modality"
+        );
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    #[test]
+    fn test_native_pointer_capture_target_helpers_and_passive_move_observer() {
+        use blitz_dom::{BaseDocument, DocumentConfig, QualName, local_name, ns};
+        use blitz_traits::events::{
+            BlitzPointerEvent, BlitzPointerId, MouseEventButton, MouseEventButtons, PointerCoords,
+            PointerDetails, UiEvent,
+        };
+        use dioxus::html::PointerData;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let base_doc = Rc::new(RefCell::new(BaseDocument::new(DocumentConfig::default())));
+        let native_doc = Document::from_base(base_doc.clone());
+
+        let (toast_id, close_span_id) = {
+            let mut base = base_doc.borrow_mut();
+            let root_id = base.root_node().id;
+            let mut mutator = base.mutate();
+            let toast_li = mutator.create_element(
+                QualName::new(None, ns!(html), local_name!("li")),
+                vec![
+                    blitz_dom::Attribute {
+                        name: QualName::new(None, ns!(), local_name!("id")),
+                        value: "toast-1".to_string(),
+                    },
+                    blitz_dom::Attribute {
+                        name: QualName::new(None, ns!(), local_name!("style")),
+                        value: "position: fixed; left: 10px; top: 10px; width: 200px; height: 60px; display: block;".to_string(),
+                    },
+                ],
+            );
+            let close_btn = mutator.create_element(
+                QualName::new(None, ns!(html), local_name!("button")),
+                vec![blitz_dom::Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "toast-close".to_string(),
+                }],
+            );
+            let close_span = mutator.create_element(
+                QualName::new(None, ns!(html), local_name!("span")),
+                vec![blitz_dom::Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "toast-close-icon".to_string(),
+                }],
+            );
+            mutator.append_children(close_btn, &[close_span]);
+            mutator.append_children(toast_li, &[close_btn]);
+            mutator.append_children(root_id, &[toast_li]);
+            (toast_li, close_span)
+        };
+        native_doc.resolve(0.0);
+
+        let moves = Rc::new(RefCell::new(Vec::new()));
+        let moves_clone = moves.clone();
+        let move_guard = crate::dom::observer::observe_pointer_move(move |x, y| {
+            moves_clone.borrow_mut().push((x, y));
+        })
+        .expect("observe_pointer_move must succeed");
+
+        let mk_pe = |x: f32, y: f32, buttons: MouseEventButtons| BlitzPointerEvent {
+            id: BlitzPointerId::Mouse,
+            is_primary: true,
+            coords: PointerCoords {
+                page_x: x,
+                page_y: y,
+                screen_x: x,
+                screen_y: y,
+                client_x: x,
+                client_y: y,
+            },
+            button: MouseEventButton::Main,
+            buttons,
+            mods: Default::default(),
+            details: PointerDetails::default(),
+            element: Default::default(),
+            active_pointers: Default::default(),
+        };
+
+        // 1. Press down inside toast so mouse pointer (id=1) is active with Primary button
+        native_doc.handle_ui_event(UiEvent::PointerDown(mk_pe(
+            25.0,
+            25.0,
+            MouseEventButtons::Primary,
+        )));
+
+        let toast_el = native_doc
+            .element_by_id("toast-1")
+            .expect("toast-1 must exist");
+        let down_data_toast = PointerData::new(dioxus_native::NativePointerData::with_target(
+            mk_pe(25.0, 25.0, MouseEventButtons::Primary),
+            Rc::downgrade(&base_doc),
+            toast_id,
+        ));
+        let pid = extract_pointer_id(&down_data_toast);
+        assert_eq!(pid, 1);
+        assert!(!is_interactive_button_target(&down_data_toast));
+
+        // Nested span inside <button> must be detected as interactive button target
+        let down_data_btn_icon = PointerData::new(dioxus_native::NativePointerData::with_target(
+            mk_pe(25.0, 25.0, MouseEventButtons::Primary),
+            Rc::downgrade(&base_doc),
+            close_span_id,
+        ));
+        assert!(is_interactive_button_target(&down_data_btn_icon));
+
+        // Acquire capture on toast_el
+        toast_el
+            .set_pointer_capture(pid)
+            .expect("set_pointer_capture must succeed while button is active");
+        assert!(toast_el.has_pointer_capture(pid));
+
+        // Dispatch PointerMove outside toast bounds: passive observer still receives coordinates without stealing capture
+        native_doc.handle_ui_event(UiEvent::PointerMove(mk_pe(
+            350.0,
+            420.0,
+            MouseEventButtons::Primary,
+        )));
+        assert_eq!(*moves.borrow(), vec![(350.0, 420.0)]);
+        assert!(toast_el.has_pointer_capture(pid));
+
+        toast_el
+            .release_pointer_capture(pid)
+            .expect("release_pointer_capture must succeed");
+        assert!(!toast_el.has_pointer_capture(pid));
+
+        native_doc.handle_ui_event(UiEvent::PointerUp(mk_pe(
+            350.0,
+            420.0,
+            MouseEventButtons::None,
+        )));
+
+        drop(move_guard);
+        native_doc.handle_ui_event(UiEvent::PointerMove(mk_pe(
+            400.0,
+            450.0,
+            MouseEventButtons::None,
+        )));
+        assert_eq!(
+            *moves.borrow(),
+            vec![(350.0, 420.0)],
+            "Dropped observe_pointer_move guard must clean up listener"
+        );
+    }
 }

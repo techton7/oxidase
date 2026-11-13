@@ -87,6 +87,15 @@ pub fn observe_form_reset(
     crate::dom::backend::observe_form_reset(element_id, form_id, Box::new(callback))
 }
 
+/// Observes passive document-wide pointer move coordinates `(client_x, client_y)` across Web and Native hosts.
+///
+/// Uses passive document observation and never acquires W3C pointer capture.
+pub fn observe_pointer_move(
+    callback: impl FnMut(f64, f64) + 'static,
+) -> Result<WatcherGuard> {
+    crate::dom::backend::observe_pointer_move(Box::new(callback))
+}
+
 /// Observes scroll events across viewport and scrollable ancestor containers.
 pub fn observe_scroll(
     callback: impl FnMut() + 'static,

@@ -20,7 +20,7 @@ pub use watcher::*;
 pub mod runtime;
 
 pub mod dom;
-pub use dom::{document, Document, Element};
+pub use dom::{document, Document, Element, FocusOptions};
 
 pub mod scroll;
 pub use scroll::Scrollable;

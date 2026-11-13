@@ -27,6 +27,11 @@ impl Document {
         None
     }
 
+    /// Queries the first element matching the given CSS selector in mock document.
+    pub fn query_selector(&self, _selector: &str) -> Option<crate::dom::element::Element> {
+        None
+    }
+
     /// Returns the element that currently holds active keyboard focus in the mock document.
     pub fn active_element(&self) -> Option<crate::dom::element::Element> {
         None
@@ -62,11 +67,25 @@ impl Document {
 
     /// Requests mock focus.
     pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
+        self.set_focus_with_options(element_id, crate::dom::element::FocusOptions::default())
+    }
+
+    /// Requests mock focus with explicit focus options.
+    pub fn set_focus_with_options(
+        &self,
+        element_id: &str,
+        _options: crate::dom::element::FocusOptions,
+    ) -> Result<(), crate::error::HostError> {
         Err(crate::error::HostError::ElementNotFound(element_id.to_string()))
     }
 
     /// Queries mock active element.
     pub fn is_element_active(&self, _element_id: &str) -> bool {
+        false
+    }
+
+    /// Queries mock `:focus-visible` state.
+    pub fn is_element_focus_visible(&self, _element_id: &str) -> bool {
         false
     }
 
@@ -141,6 +160,12 @@ pub(crate) fn observe_form_reset(
     _callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     Ok(crate::watcher_guard::WatcherGuard::new("mock_form_reset", 0, None))
+}
+
+pub(crate) fn observe_pointer_move(
+    _callback: Box<dyn FnMut(f64, f64) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_pointer_move", 0, None))
 }
 
 pub(crate) fn observe_scroll(

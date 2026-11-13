@@ -89,21 +89,36 @@ pub fn watch_document_dismiss_with_options(
     let listen_pointer = options.listen_pointer;
     let listen_focusin = options.listen_focusin;
 
+    let mut pending_pointer_focus_path: Option<Vec<String>> = None;
+
     observe_capture_events(move |event| {
         match event.kind {
             CaptureEventKind::PointerDown => {
                 if !listen_pointer {
+                    pending_pointer_focus_path = None;
                     return;
                 }
                 let is_inside = event.path_ids.iter().any(|id| boundary_ids.contains(id));
                 if !is_inside {
+                    pending_pointer_focus_path = Some(event.path_ids.clone());
                     on_event(DismissEvent::PointerDown {
                         path_ids: event.path_ids,
                     });
+                } else {
+                    pending_pointer_focus_path = None;
                 }
             }
             CaptureEventKind::FocusIn => {
-                if !listen_focusin {
+                let suppressed_by_pointer = pending_pointer_focus_path
+                    .take()
+                    .and_then(|ptr_path| {
+                        event
+                            .path_ids
+                            .first()
+                            .map(|focus_target| ptr_path.contains(focus_target))
+                    })
+                    .unwrap_or(false);
+                if suppressed_by_pointer || !listen_focusin {
                     return;
                 }
                 let is_inside = event.path_ids.iter().any(|id| boundary_ids.contains(id));
@@ -114,6 +129,7 @@ pub fn watch_document_dismiss_with_options(
                 }
             }
             CaptureEventKind::KeyDown { key } => {
+                pending_pointer_focus_path = None;
                 if !listen_escape {
                     return;
                 }

@@ -36,14 +36,7 @@ impl std::fmt::Debug for Document {
 
 /// Extracts the underlying `Rc<RefCell<BaseDocument>>` from a `dioxus_native::NodeHandle`.
 pub fn extract_base_doc(handle: &dioxus_native::NodeHandle) -> Rc<RefCell<BaseDocument>> {
-    #[allow(dead_code)]
-    struct NodeHandleLayout {
-        doc: Rc<RefCell<BaseDocument>>,
-        node_id: blitz_dom::NodeId,
-    }
-    let cloned = handle.clone();
-    let repr: NodeHandleLayout = unsafe { std::mem::transmute(cloned) };
-    repr.doc
+    handle.base_document()
 }
 
 impl Document {
@@ -131,6 +124,18 @@ impl Document {
                         doc.dispatch_element_scroll(id);
                     }
                     doc.dispatch_scroll();
+                }
+                return;
+            }
+
+            if let DomEventData::PointerMove(pe) = &event.data {
+                if let Some(inner) = weak_inner.upgrade() {
+                    let doc = Document {
+                        inner,
+                        authoritative: Rc::new(Cell::new(true)),
+                        last_synced_len: Rc::new(Cell::new(0)),
+                    };
+                    doc.dispatch_pointer_move(pe.client_x() as f64, pe.client_y() as f64);
                 }
                 return;
             }
@@ -395,8 +400,24 @@ impl Document {
         Some(crate::runtime::geometry::Rect::new(x, y, width, height))
     }
 
+    /// Queries the first element in the document matching the given CSS selector.
+    pub fn query_selector(&self, selector: &str) -> Option<crate::dom::element::Element> {
+        let base = self.get_base()?;
+        let node_id = base.try_borrow().ok()?.query_selector(selector).ok().flatten()?;
+        Some(crate::dom::element::Element::from_native(base, node_id))
+    }
+
     /// Requests focus for the element with the specified ID in the Blitz DOM.
     pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
+        self.set_focus_with_options(element_id, crate::dom::element::FocusOptions::default())
+    }
+
+    /// Requests focus for the element with the specified ID and focus options in the Blitz DOM.
+    pub fn set_focus_with_options(
+        &self,
+        element_id: &str,
+        options: crate::dom::element::FocusOptions,
+    ) -> Result<(), crate::error::HostError> {
         let base = self
             .get_base()
             .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
@@ -405,8 +426,16 @@ impl Document {
         };
         let node_id = base_mut
             .get_element_by_id(element_id)
+            .or_else(|| base_mut.query_selector(&format!("#{element_id}")).ok().flatten())
             .ok_or_else(|| crate::error::HostError::ElementNotFound(element_id.to_string()))?;
-        base_mut.set_focus_to(node_id);
+        base_mut.set_focus_to_with_options(
+            node_id,
+            blitz_dom::FocusSource::Script,
+            blitz_dom::FocusOptions {
+                prevent_scroll: options.prevent_scroll,
+                focus_visible: options.focus_visible,
+            },
+        );
         Ok(())
     }
 
@@ -415,11 +444,27 @@ impl Document {
         let Some(base) = self.get_base() else {
             return false;
         };
-        let base = base.borrow();
+        let Ok(base) = base.try_borrow() else {
+            return false;
+        };
         let Some(node_id) = base.get_element_by_id(element_id) else {
             return false;
         };
         base.active_focus_node_id() == Some(node_id)
+    }
+
+    /// Checks if the element with the specified ID currently matches `:focus-visible` in the Blitz DOM.
+    pub fn is_element_focus_visible(&self, element_id: &str) -> bool {
+        let Some(base) = self.get_base() else {
+            return false;
+        };
+        let Ok(base) = base.try_borrow() else {
+            return false;
+        };
+        let Some(node_id) = base.get_element_by_id(element_id) else {
+            return false;
+        };
+        base.is_focus_visible(node_id)
     }
 
     /// Checks whether any anchor element is occluded or outside viewport bounds.
@@ -734,6 +779,21 @@ impl Document {
         }
     }
 
+    /// Dispatches a passive pointer move coordinate update to all registered pointer move observers.
+    pub fn dispatch_pointer_move(&self, client_x: f64, client_y: f64) {
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.pointer_move_observers.values().cloned().collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb(client_x, client_y);
+            }
+        }
+    }
+
     /// Dispatches a scroll event to all registered scroll observers.
     pub fn dispatch_scroll(&self) {
         let handles = CURRENT_OBSERVERS.with(|cell| {
@@ -865,6 +925,7 @@ struct FormResetObserverEntry {
 struct NativeObserverRegistry {
     resize_observers: std::collections::HashMap<u64, ResizeObserverEntry>,
     capture_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>>>,
+    pointer_move_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(f64, f64)>>>>,
     transition_observers: std::collections::HashMap<u64, TransitionObserverEntry>,
     form_reset_observers: std::collections::HashMap<u64, FormResetObserverEntry>,
     scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
@@ -1023,6 +1084,30 @@ pub(crate) fn observe_form_reset(
             CURRENT_OBSERVERS.with(|cell| {
                 if let Ok(mut reg) = cell.try_borrow_mut() {
                     reg.form_reset_observers.remove(&sub_id);
+                }
+            });
+        },
+    ))
+}
+
+pub(crate) fn observe_pointer_move(
+    callback: Box<dyn FnMut(f64, f64) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let sub_id = crate::internal::next_subscription_id();
+    CURRENT_OBSERVERS.with(|cell| {
+        cell.borrow_mut()
+            .pointer_move_observers
+            .insert(sub_id, Rc::new(RefCell::new(callback)));
+    });
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "native_pointer_move_observer",
+        sub_id,
+        None,
+        move || {
+            CURRENT_OBSERVERS.with(|cell| {
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.pointer_move_observers.remove(&sub_id);
                 }
             });
         },

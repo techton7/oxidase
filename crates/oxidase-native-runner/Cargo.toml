@@ -15,18 +15,18 @@ publish = false
 # `crates/oxidase/examples/cross_host/main.rs`.
 
 [dependencies]
-oxidase = { version = "0.4.0", path = "../oxidase", features = ["native"] }
-dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.0" }
-blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.0", default-features = false }
+oxidase = { version = "0.4.1", path = "../oxidase", features = ["native"] }
+dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.3" }
+blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.3", default-features = false }
 dioxus = { version = "0.8.0-alpha.3", default-features = false, features = ["launch", "devtools", "document", "hooks", "signals", "macro", "html"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
 [patch.crates-io]
-blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.0" }
-blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.0" }
-blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.0" }
-blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.0" }
+blitz-shell = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.3" }
+blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.3" }
+blitz-traits = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.3" }
+blitz-paint = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.3" }
 
 
 # Keep oxidase-native-runner in debug mode (opt-level = 0, full debuginfo)

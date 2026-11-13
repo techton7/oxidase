@@ -41,6 +41,44 @@ impl Document {
         Some(crate::dom::element::Element::from_web(el))
     }
 
+    /// Queries the first element in the browser document matching the given CSS selector.
+    pub fn query_selector(&self, selector: &str) -> Option<crate::dom::element::Element> {
+        let doc = self.doc.as_ref()?;
+        let el = doc.query_selector(selector).ok().flatten()?;
+        Some(crate::dom::element::Element::from_web(el))
+    }
+
+    /// Requests focus for the element with the specified ID in the browser document.
+    pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
+        self.set_focus_with_options(element_id, crate::dom::element::FocusOptions::default())
+    }
+
+    /// Requests focus for the element with the specified ID and focus options in the browser document.
+    pub fn set_focus_with_options(
+        &self,
+        element_id: &str,
+        options: crate::dom::element::FocusOptions,
+    ) -> Result<(), crate::error::HostError> {
+        let el = self
+            .element_by_id(element_id)
+            .ok_or_else(|| crate::error::HostError::ElementNotFound(element_id.to_string()))?;
+        el.focus_sync_with_options(options)
+    }
+
+    /// Checks if the element with the specified ID currently holds document focus in the browser document.
+    pub fn is_element_active(&self, element_id: &str) -> bool {
+        self.element_by_id(element_id)
+            .map(|el| el.has_focus())
+            .unwrap_or(false)
+    }
+
+    /// Checks if the element with the specified ID currently matches `:focus-visible` in the browser document.
+    pub fn is_element_focus_visible(&self, element_id: &str) -> bool {
+        self.element_by_id(element_id)
+            .map(|el| el.matches_focus_visible())
+            .unwrap_or(false)
+    }
+
     /// Returns the activeElement if currently focused in the browser document.
     pub fn active_element(&self) -> Option<crate::dom::element::Element> {
         let doc = self.doc.as_ref()?;
@@ -451,6 +489,43 @@ pub(crate) fn observe_form_reset(
         None,
         move || {
             let _ = target.remove_event_listener_with_callback("reset", handler.as_ref().unchecked_ref());
+        },
+    ))
+}
+
+pub(crate) fn observe_pointer_move(
+    mut callback: Box<dyn FnMut(f64, f64) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let sub_id = crate::internal::next_subscription_id();
+    let win = web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
+    let doc = win.document().ok_or_else(|| crate::error::Error::Unsupported("No document".into()))?;
+
+    let handler = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
+        callback(f64::from(event.client_x()), f64::from(event.client_y()));
+    });
+
+    let opts = web_sys::AddEventListenerOptions::new();
+    opts.set_passive(true);
+
+    let doc_target: web_sys::EventTarget = doc.into();
+    let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
+        "pointermove",
+        handler.as_ref().unchecked_ref(),
+        &opts,
+    );
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "web_pointer_move_observer",
+        sub_id,
+        None,
+        move || {
+            let _ = doc_target.remove_event_listener_with_callback(
+                "pointermove",
+                handler.as_ref().unchecked_ref(),
+            );
         },
     ))
 }

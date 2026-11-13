@@ -8,12 +8,25 @@ use std::rc::Rc;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FocusOptions {
     pub prevent_scroll: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_visible: Option<bool>,
 }
 
 impl FocusOptions {
-    /// Creates a new `FocusOptions` with the specified `prevent_scroll` flag.
-    pub fn new(prevent_scroll: bool) -> Self {
-        Self { prevent_scroll }
+    /// Creates a new `FocusOptions` with the specified `prevent_scroll` flag and inherited `:focus-visible` modality (`None`).
+    pub const fn new(prevent_scroll: bool) -> Self {
+        Self {
+            prevent_scroll,
+            focus_visible: None,
+        }
+    }
+
+    /// Creates a new `FocusOptions` with explicit `prevent_scroll` and `focus_visible` overrides.
+    pub const fn with_focus_visible(prevent_scroll: bool, focus_visible: Option<bool>) -> Self {
+        Self {
+            prevent_scroll,
+            focus_visible,
+        }
     }
 }
 
@@ -43,6 +56,14 @@ pub(crate) enum ElementTarget {
 impl Element {
     /// Constructs an Element from a Dioxus `MountedHandle`.
     pub fn from_mounted(handle: MountedHandle) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(el) = handle.downcast::<web_sys::Element>() {
+            return Self::from_web(el.clone());
+        }
+        #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+        if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+            return Self::from_native(nh.base_document(), nh.node_id());
+        }
         Self {
             target: ElementTarget::Mounted(handle),
         }
@@ -150,34 +171,113 @@ impl Element {
         }
     }
 
+    /// Synchronously grants keyboard focus to the element with default focus options when backed by a live DOM handle.
+    pub fn focus_sync(&self) -> Result<(), HostError> {
+        self.focus_sync_with_options(FocusOptions::default())
+    }
+
+    /// Synchronously grants keyboard focus to the element with specific focus options when backed by a live DOM handle.
+    pub fn focus_sync_with_options(&self, options: FocusOptions) -> Result<(), HostError> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let blitz_opts = blitz_dom::FocusOptions {
+                    prevent_scroll: options.prevent_scroll,
+                    focus_visible: options.focus_visible,
+                };
+                if let Ok(mut base) = doc.try_borrow_mut() {
+                    base.set_focus_to_with_options(
+                        *node_id,
+                        blitz_dom::FocusSource::Script,
+                        blitz_opts,
+                    );
+                } else {
+                    let doc_clone = doc.clone();
+                    let nid = *node_id;
+                    let _ = crate::internal::safe_spawn(async move {
+                        if let Ok(mut base) = doc_clone.try_borrow_mut() {
+                            base.set_focus_to_with_options(
+                                nid,
+                                blitz_dom::FocusSource::Script,
+                                blitz_opts,
+                            );
+                        }
+                    });
+                }
+                Ok(())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                use wasm_bindgen::JsValue;
+                let opts_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &opts_obj,
+                    &JsValue::from_str("preventScroll"),
+                    &JsValue::from_bool(options.prevent_scroll),
+                );
+                if let Some(fv) = options.focus_visible {
+                    let _ = js_sys::Reflect::set(
+                        &opts_obj,
+                        &JsValue::from_str("focusVisible"),
+                        &JsValue::from_bool(fv),
+                    );
+                }
+                if let Ok(focus_val) = js_sys::Reflect::get(el, &JsValue::from_str("focus"))
+                    && let Ok(focus_fn) = focus_val.dyn_into::<js_sys::Function>()
+                {
+                    let _ = focus_fn.call1(el, &opts_obj);
+                } else if let Ok(html_el) = el.clone().dyn_into::<web_sys::HtmlElement>() {
+                    let _ = html_el.focus();
+                }
+                Ok(())
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    nh.set_focus_with_options(blitz_dom::FocusOptions {
+                        prevent_scroll: options.prevent_scroll,
+                        focus_visible: options.focus_visible,
+                    });
+                    return Ok(());
+                }
+                let _ = options;
+                let handle = handle.clone();
+                let _ = crate::internal::safe_spawn(async move {
+                    let _ = handle.set_focus(true).await;
+                });
+                Ok(())
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => {
+                let _ = options;
+                Ok(())
+            }
+        }
+    }
+
     /// Grants keyboard focus to the element with default focus options.
     pub async fn focus(&self) -> Result<(), HostError> {
         self.focus_with_options(FocusOptions::default()).await
     }
 
     /// Grants keyboard focus to the element with specific focus options.
-    pub async fn focus_with_options(&self, _options: FocusOptions) -> Result<(), HostError> {
+    pub async fn focus_with_options(&self, options: FocusOptions) -> Result<(), HostError> {
         match &self.target {
-            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-            ElementTarget::Native { doc, node_id } => {
-                let mut base = doc.borrow_mut();
-                base.set_focus_to(*node_id);
-                Ok(())
-            }
-            #[cfg(target_arch = "wasm32")]
-            ElementTarget::Web(el) => {
-                use wasm_bindgen::JsCast;
-                if let Ok(html_el) = el.clone().dyn_into::<web_sys::HtmlElement>() {
-                    let _ = html_el.focus();
-                }
-                Ok(())
-            }
             ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    nh.set_focus_with_options(blitz_dom::FocusOptions {
+                        prevent_scroll: options.prevent_scroll,
+                        focus_visible: options.focus_visible,
+                    });
+                    return Ok(());
+                }
+                let _ = options;
                 let _ = handle.set_focus(true).await;
                 Ok(())
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            ElementTarget::Mock => Ok(()),
+            _ => self.focus_sync_with_options(options),
         }
     }
 
@@ -214,9 +314,10 @@ impl Element {
     pub fn has_focus(&self) -> bool {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-            ElementTarget::Native { doc, node_id } => {
-                doc.borrow().active_focus_node_id() == Some(*node_id)
-            }
+            ElementTarget::Native { doc, node_id } => doc
+                .try_borrow()
+                .map(|b| b.active_focus_node_id() == Some(*node_id))
+                .unwrap_or(false),
             #[cfg(target_arch = "wasm32")]
             ElementTarget::Web(el) => web_sys::window()
                 .and_then(|w| w.document())
@@ -226,6 +327,210 @@ impl Element {
             ElementTarget::Mounted(_) => false,
             #[cfg(not(target_arch = "wasm32"))]
             ElementTarget::Mock => false,
+        }
+    }
+
+    /// Checks whether this element currently matches the W3C `:focus-visible` pseudo-class.
+    pub fn matches_focus_visible(&self) -> bool {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => doc
+                .try_borrow()
+                .map(|b| b.is_focus_visible(*node_id))
+                .unwrap_or(false),
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.matches(":focus-visible").unwrap_or(false),
+            ElementTarget::Mounted(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => false,
+        }
+    }
+
+    /// Alias for [`Element::matches_focus_visible`].
+    #[inline]
+    pub fn is_focus_visible(&self) -> bool {
+        self.matches_focus_visible()
+    }
+
+    /// Acquires W3C pointer capture on this element for `pointer_id`.
+    pub fn set_pointer_capture(&self, pointer_id: i32) -> Result<(), HostError> {
+        let _ = pointer_id;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                base.set_pointer_capture(*node_id, pointer_id)
+                    .map_err(|err| HostError::Unsupported(err.to_string()))
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.set_pointer_capture(pointer_id).map_err(|err| {
+                HostError::Js(crate::JsError::Exception {
+                    message: format!("{err:?}"),
+                    stack: None,
+                })
+            }),
+            ElementTarget::Mounted(_) => Err(HostError::Unsupported(
+                "MountedHandle does not support synchronous set_pointer_capture".into(),
+            )),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Err(HostError::Unsupported(
+                "Mock Element does not support set_pointer_capture".into(),
+            )),
+        }
+    }
+
+    /// Releases W3C pointer capture on this element for `pointer_id`.
+    pub fn release_pointer_capture(&self, pointer_id: i32) -> Result<(), HostError> {
+        let _ = pointer_id;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                base.release_pointer_capture(*node_id, pointer_id)
+                    .map_err(|err| HostError::Unsupported(err.to_string()))
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.release_pointer_capture(pointer_id).map_err(|err| {
+                HostError::Js(crate::JsError::Exception {
+                    message: format!("{err:?}"),
+                    stack: None,
+                })
+            }),
+            ElementTarget::Mounted(_) => Err(HostError::Unsupported(
+                "MountedHandle does not support synchronous release_pointer_capture".into(),
+            )),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Err(HostError::Unsupported(
+                "Mock Element does not support release_pointer_capture".into(),
+            )),
+        }
+    }
+
+    /// Checks whether this element currently holds or has pending W3C pointer capture for `pointer_id`.
+    pub fn has_pointer_capture(&self, pointer_id: i32) -> bool {
+        let _ = pointer_id;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => doc
+                .try_borrow()
+                .map(|b| b.has_pointer_capture(*node_id, pointer_id))
+                .unwrap_or(false),
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.has_pointer_capture(pointer_id),
+            ElementTarget::Mounted(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => false,
+        }
+    }
+
+    /// Returns the ASCII-lowercase tag name of this element if available.
+    pub fn tag_name(&self) -> Option<String> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().ok()?;
+                let node = base.get_node(*node_id)?;
+                node.element_data()
+                    .map(|el| (&*el.name.local).to_ascii_lowercase())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => Some(el.tag_name().to_ascii_lowercase()),
+            ElementTarget::Mounted(_) => None,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
+        }
+    }
+
+    /// Tests whether this element matches the given CSS selector.
+    pub fn matches(&self, selector: &str) -> bool {
+        let _ = selector;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => doc
+                .try_borrow()
+                .ok()
+                .filter(|b| b.get_node(*node_id).is_some())
+                .and_then(|b| b.matches_selector(*node_id, selector).ok())
+                .unwrap_or(false),
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.matches(selector).unwrap_or(false),
+            ElementTarget::Mounted(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => false,
+        }
+    }
+
+    /// Finds the closest inclusive ancestor matching the given CSS selector.
+    pub fn closest(&self, selector: &str) -> Option<Self> {
+        let _ = selector;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let nid = doc
+                    .try_borrow()
+                    .ok()
+                    .filter(|b| b.get_node(*node_id).is_some())
+                    .and_then(|b| b.closest(*node_id, selector).ok().flatten())?;
+                Some(Self::from_native(doc.clone(), nid))
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.closest(selector).ok().flatten().map(Self::from_web),
+            ElementTarget::Mounted(_) => None,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
+        }
+    }
+
+    /// Finds the closest inclusive ancestor whose element tag name matches `tag` (ASCII case-insensitively).
+    pub fn closest_tag(&self, tag: &str) -> Option<Self> {
+        let _ = tag;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().ok()?;
+                let mut cur = Some(*node_id);
+                while let Some(nid) = cur {
+                    let node = base.get_node(nid)?;
+                    if let Some(el) = node.element_data()
+                        && (&*el.name.local).eq_ignore_ascii_case(tag)
+                    {
+                        drop(base);
+                        return Some(Self::from_native(doc.clone(), nid));
+                    }
+                    cur = node.parent;
+                }
+                None
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.closest(tag).ok().flatten().map(Self::from_web),
+            ElementTarget::Mounted(_) => None,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
+        }
+    }
+
+    /// Queries the first descendant element of this element matching the given CSS selector.
+    pub fn query_selector(&self, selector: &str) -> Option<Self> {
+        let _ = selector;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let nid = doc
+                    .try_borrow()
+                    .ok()
+                    .filter(|b| b.get_node(*node_id).is_some())
+                    .and_then(|b| b.query_selector_in(*node_id, selector).ok().flatten())?;
+                Some(Self::from_native(doc.clone(), nid))
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => el.query_selector(selector).ok().flatten().map(Self::from_web),
+            ElementTarget::Mounted(_) => None,
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
         }
     }
 
@@ -533,6 +838,49 @@ impl Element {
     }
 }
 
+/// Extracts the W3C DOM `pointerId` from a Dioxus `PointerData` payload across Web and Native hosts.
+pub fn extract_pointer_id(evt: &dioxus::prelude::PointerData) -> i32 {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(web_event) = evt.downcast::<web_sys::PointerEvent>() {
+        return web_event.pointer_id();
+    }
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    if let Some(native_event) = evt.downcast::<dioxus_native::NativePointerData>() {
+        return native_event.inner().id.to_dom_pointer_id();
+    }
+    evt.pointer_id()
+}
+
+/// Extracts the originating DOM target `Element` from a Dioxus `PointerData` payload across Web and Native hosts.
+pub fn pointer_event_target(evt: &dioxus::prelude::PointerData) -> Option<Element> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let web_event = evt.downcast::<web_sys::PointerEvent>()?;
+        let target = web_event.target()?;
+        let el = target.dyn_into::<web_sys::Element>().ok()?;
+        return Some(Element::from_web(el));
+    }
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    {
+        let native_event = evt.downcast::<dioxus_native::NativePointerData>()?;
+        let nh = native_event.target_node_handle()?;
+        return Some(Element::from_native(nh.base_document(), nh.node_id()));
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "native")))]
+    {
+        let _ = evt;
+        None
+    }
+}
+
+/// Checks whether a Dioxus `PointerData` event originated on or inside an interactive `<button>` element.
+pub fn is_interactive_button_target(evt: &dioxus::prelude::PointerData) -> bool {
+    pointer_event_target(evt)
+        .and_then(|el| el.closest_tag("button"))
+        .is_some()
+}
+
 impl Scrollable for Element {
     fn scroll_x(&self) -> impl Future<Output = Result<f64, HostError>> {
         self.scroll_x()
@@ -618,6 +966,14 @@ mod tests {
             let el = Element::mock();
             assert_eq!(el.id(), None);
             assert!(!el.is_connected());
+            assert!(!el.has_focus());
+            assert!(!el.matches_focus_visible());
+            assert!(!el.has_pointer_capture(1));
+            assert!(el.set_pointer_capture(1).is_err());
+            assert!(el.release_pointer_capture(1).is_err());
+            assert_eq!(el.tag_name(), None);
+            assert!(el.closest_tag("button").is_none());
+            assert!(el.query_selector("button").is_none());
             assert!(!el.has_attribute("data-state"));
             assert_eq!(el.get_attribute("data-state"), None);
             el.set_attribute("data-state", "open");
@@ -625,6 +981,18 @@ mod tests {
             let debug_str = format!("{:?}", el);
             assert!(debug_str.contains("Element"));
         }
+
+        let default_focus = FocusOptions::default();
+        assert!(!default_focus.prevent_scroll);
+        assert_eq!(default_focus.focus_visible, None);
+
+        let no_scroll = FocusOptions::new(true);
+        assert!(no_scroll.prevent_scroll);
+        assert_eq!(no_scroll.focus_visible, None);
+
+        let suppress_ring = FocusOptions::with_focus_visible(false, Some(false));
+        assert!(!suppress_ring.prevent_scroll);
+        assert_eq!(suppress_ring.focus_visible, Some(false));
     }
 }
 

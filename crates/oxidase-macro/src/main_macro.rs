@@ -33,46 +33,7 @@ fn rewrite_launch_expr(expr: &mut syn::Expr, is_headless: bool) -> bool {
                     if is_headless {
                         *expr = syn::parse_quote!(oxidase::launch(#app));
                     } else {
-                        *expr = syn::parse_quote!({
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                ::dioxus::launch(#app);
-                            }
-
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                #[::dioxus::prelude::component]
-                                fn __OxidaseNativeHostedRoot() -> ::dioxus::prelude::Element {
-                                    // 1. Establish ambient Document::current() context
-                                    ::oxidase::launch::ensure_document_context();
-
-                                    // 2. Wire host redraw requester on Window handle
-                                    let window = ::dioxus_native::use_window();
-                                    ::dioxus::prelude::use_hook(|| {
-                                        let w = window.clone();
-                                        ::std::rc::Rc::new(::oxidase::launch::bind_host_redraw_requester(move || {
-                                            w.request_redraw();
-                                        }))
-                                    });
-
-                                    // 3. Connect WindowEvent::RedrawRequested to step_hosted_frame()
-                                    ::dioxus_native::use_window_event(move |event, _target| {
-                                        if let ::dioxus_native::winit::event::WindowEvent::RedrawRequested = event {
-                                            ::oxidase::launch::step_hosted_frame();
-                                        }
-                                    });
-
-                                    // 4. Render consumer App inside HostedRootWrapper
-                                    ::dioxus::prelude::rsx! {
-                                        ::oxidase::launch::HostedRootWrapper {
-                                            #app {}
-                                        }
-                                    }
-                                }
-
-                                ::dioxus_native::launch(__OxidaseNativeHostedRoot);
-                            }
-                        });
+                        *expr = syn::parse_quote!(::oxidase::launch::launch_hosted(#app));
                     }
                     return true;
                 }

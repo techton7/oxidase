@@ -127,3 +127,61 @@ pub fn launch(app: fn() -> Element) {
         dioxus::launch(app);
     }
 }
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+std::thread_local! {
+    static HOSTED_TARGET_APP: std::cell::Cell<Option<fn() -> Element>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+#[component]
+fn __OxidaseNativeHostedRoot() -> Element {
+    ensure_document_context();
+
+    let window = dioxus_native::use_window();
+    use_hook(|| {
+        let w = window.clone();
+        std::rc::Rc::new(bind_host_redraw_requester(move || {
+            w.request_redraw();
+        }))
+    });
+
+    dioxus_native::use_window_event(move |event, _target| {
+        if let dioxus_native::winit::event::WindowEvent::RedrawRequested = event {
+            step_hosted_frame();
+        }
+    });
+
+    let inner = if let Some(app) = HOSTED_TARGET_APP.with(|c| c.get()) {
+        rsx! {
+            {app()}
+        }
+    } else {
+        rsx! {}
+    };
+
+    rsx! {
+        HostedRootWrapper {
+            {inner}
+        }
+    }
+}
+
+/// Hosted window launch entry invoked by `#[oxidase::main]`.
+pub fn launch_hosted(app: fn() -> Element) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        dioxus::launch(app);
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    {
+        HOSTED_TARGET_APP.with(|c| c.set(Some(app)));
+        dioxus_native::launch(__OxidaseNativeHostedRoot);
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "native")))]
+    {
+        dioxus::launch(app);
+    }
+}
