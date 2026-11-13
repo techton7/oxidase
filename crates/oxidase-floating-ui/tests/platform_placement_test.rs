@@ -319,3 +319,152 @@ fn test_platform_composed_pipeline() {
         "Pipeline x must be shifted into view at viewport boundary"
     );
 }
+
+#[test]
+fn test_double_correction_invariants() {
+    use oxidase_floating_ui::compute_coords_from_placement;
+    use oxidase_floating_ui::geometry::{ElementRects, Rect, Strategy};
+    use oxidase_floating_ui::types::{FloatingPlatform, GetElementRectsArgs, Platform};
+
+    // Invariant 1: compute_coords_from_placement produces identical results regardless of floating.x / floating.y input.
+    let reference = Rect {
+        x: 150.0,
+        y: 220.0,
+        width: 100.0,
+        height: 40.0,
+    };
+
+    let all_placements = [
+        Placement::Top,
+        Placement::TopStart,
+        Placement::TopEnd,
+        Placement::Right,
+        Placement::RightStart,
+        Placement::RightEnd,
+        Placement::Bottom,
+        Placement::BottomStart,
+        Placement::BottomEnd,
+        Placement::Left,
+        Placement::LeftStart,
+        Placement::LeftEnd,
+    ];
+
+    let rtl_options = [None, Some(false), Some(true)];
+
+    let floating_variations = [
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 80.0,
+            height: 60.0,
+        },
+        Rect {
+            x: 50.0,
+            y: 120.0,
+            width: 80.0,
+            height: 60.0,
+        },
+        Rect {
+            x: -300.0,
+            y: -450.0,
+            width: 80.0,
+            height: 60.0,
+        },
+        Rect {
+            x: 12345.0,
+            y: -98765.0,
+            width: 80.0,
+            height: 60.0,
+        },
+    ];
+
+    for &placement in &all_placements {
+        for &rtl in &rtl_options {
+            let canonical_rects = ElementRects {
+                reference,
+                floating: floating_variations[0],
+            };
+            let canonical_coords = compute_coords_from_placement(&canonical_rects, placement, rtl);
+
+            for &varied_floating in &floating_variations[1..] {
+                let varied_rects = ElementRects {
+                    reference,
+                    floating: varied_floating,
+                };
+                let varied_coords = compute_coords_from_placement(&varied_rects, placement, rtl);
+                assert_eq!(
+                    canonical_coords,
+                    varied_coords,
+                    "compute_coords_from_placement must ignore floating.x/y for placement={:?}, rtl={:?}: expected {:?}, got {:?}",
+                    placement,
+                    rtl,
+                    canonical_coords,
+                    varied_coords
+                );
+            }
+        }
+    }
+
+    // Invariant 2: NativeFloatingPlatform::get_element_rects produces floating.x == 0.0 and floating.y == 0.0 for Strategy::Fixed
+    let (doc, ref_id, float_id) = setup_test_doc(
+        (1000, 800),
+        "position: absolute; left: 150px; top: 220px; width: 100px; height: 40px; display: block;",
+        "position: fixed; left: 400px; top: 600px; width: 80px; height: 60px; display: block;",
+    );
+
+    let platform = NativeFloatingPlatform::from_base(doc);
+
+    // 2a. FloatingPlatform trait
+    let rects_from_fp = FloatingPlatform::get_element_rects(&platform, "ref", "float")
+        .expect("FloatingPlatform::get_element_rects must succeed");
+    assert_eq!(
+        rects_from_fp.floating.x, 0.0,
+        "FloatingPlatform floating.x must be 0.0 to prevent double-correction under Strategy::Fixed"
+    );
+    assert_eq!(
+        rects_from_fp.floating.y, 0.0,
+        "FloatingPlatform floating.y must be 0.0 to prevent double-correction under Strategy::Fixed"
+    );
+    assert_eq!(rects_from_fp.floating.width, 80.0);
+    assert_eq!(rects_from_fp.floating.height, 60.0);
+
+    // 2b. Platform<NodeId, ()> trait
+    let rects_from_node_platform = Platform::<NodeId, ()>::get_element_rects(
+        &platform,
+        GetElementRectsArgs {
+            reference: ElementOrVirtual::Element(&ref_id),
+            floating: &float_id,
+            strategy: Strategy::Fixed,
+        },
+    );
+    assert_eq!(
+        rects_from_node_platform.floating.x, 0.0,
+        "Platform<NodeId> floating.x must be 0.0 to prevent double-correction under Strategy::Fixed"
+    );
+    assert_eq!(
+        rects_from_node_platform.floating.y, 0.0,
+        "Platform<NodeId> floating.y must be 0.0 to prevent double-correction under Strategy::Fixed"
+    );
+    assert_eq!(rects_from_node_platform.floating.width, 80.0);
+    assert_eq!(rects_from_node_platform.floating.height, 60.0);
+
+    // 2c. Platform<String, ()> trait
+    let rects_from_string_platform = Platform::<String, ()>::get_element_rects(
+        &platform,
+        GetElementRectsArgs {
+            reference: ElementOrVirtual::Element(&"ref".to_string()),
+            floating: &"float".to_string(),
+            strategy: Strategy::Fixed,
+        },
+    );
+    assert_eq!(
+        rects_from_string_platform.floating.x, 0.0,
+        "Platform<String> floating.x must be 0.0 to prevent double-correction under Strategy::Fixed"
+    );
+    assert_eq!(
+        rects_from_string_platform.floating.y, 0.0,
+        "Platform<String> floating.y must be 0.0 to prevent double-correction under Strategy::Fixed"
+    );
+    assert_eq!(rects_from_string_platform.floating.width, 80.0);
+    assert_eq!(rects_from_string_platform.floating.height, 60.0);
+}
