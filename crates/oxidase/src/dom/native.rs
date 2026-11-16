@@ -39,6 +39,28 @@ pub fn extract_base_doc(handle: &dioxus_native::NodeHandle) -> Rc<RefCell<BaseDo
     handle.base_document()
 }
 
+fn lookup_node_id(base: &BaseDocument, id: &str) -> Option<blitz_dom::NodeId> {
+    base.get_element_by_id(id)
+        .or_else(|| base.query_selector(&format!("#{id}")).ok().flatten())
+        .or_else(|| {
+            let mut stack = vec![base.root_node().id];
+            while let Some(nid) = stack.pop() {
+                if let Some(node) = base.get_node(nid) {
+                    if let Some(el) = node.element_data()
+                        && el.id.as_deref() == Some(id)
+                    {
+                        return Some(nid);
+                    }
+                    if node.attr(blitz_dom::local_name!("id")) == Some(id) {
+                        return Some(nid);
+                    }
+                    stack.extend(node.children.iter().rev().copied());
+                }
+            }
+            None
+        })
+}
+
 impl Document {
     /// Returns the active native Blitz document if available in current thread or Dioxus context.
     pub fn current() -> Option<Self> {
@@ -253,25 +275,7 @@ impl Document {
     pub fn element_by_id(&self, id: &str) -> Option<crate::dom::element::Element> {
         let base = self.get_base()?;
         let borrowed = base.try_borrow().ok()?;
-        let node_id = borrowed
-            .get_element_by_id(id)
-            .or_else(|| borrowed.query_selector(&format!("#{id}")).ok().flatten())
-            .or_else(|| {
-                let mut stack = vec![borrowed.root_node().id];
-                while let Some(nid) = stack.pop() {
-                    if let Some(node) = borrowed.get_node(nid) {
-                        if let Some(el) = node.element_data()
-                            && el.id.as_deref() == Some(id) {
-                                return Some(nid);
-                            }
-                        if node.attr(blitz_dom::local_name!("id")) == Some(id) {
-                            return Some(nid);
-                        }
-                        stack.extend(node.children.iter().rev().copied());
-                    }
-                }
-                None
-            })?;
+        let node_id = lookup_node_id(&borrowed, id)?;
         drop(borrowed);
         Some(crate::dom::element::Element::from_native(
             base,
@@ -400,6 +404,138 @@ impl Document {
         Some(crate::runtime::geometry::Rect::new(x, y, width, height))
     }
 
+    /// Measures the pre-transform bounding rectangle of an element by ID (`final_layout().size` in Blitz is already unscaled).
+    pub fn measure_unscaled_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
+        self.measure_rect(element_id)
+    }
+
+    /// Measures the unscaled natural `height: auto` border-box height of an element without leaving style or transition side effects.
+    pub fn measure_auto_height(&self, element_id: &str) -> Option<f64> {
+        let base_rc = self.get_base()?;
+        let (node_id, contended_fallback) = {
+            let Ok(base) = base_rc.try_borrow() else {
+                return None;
+            };
+            let node_id = lookup_node_id(&base, element_id)?;
+            let node = base.get_node(node_id)?;
+            let current_h = node.unrounded_layout().size.height as f64;
+            let is_computed_height_auto = !node.has_damaged_descendants()
+                && node
+                    .primary_styles()
+                    .is_some_and(|s| s.get_position().height.is_auto());
+            if is_computed_height_auto && current_h > 0.0 {
+                return Some(current_h);
+            }
+            (node_id, (current_h > 0.0).then_some(current_h))
+        };
+
+        let Ok(mut base) = base_rc.try_borrow_mut() else {
+            return contended_fallback;
+        };
+        if base.get_node(node_id).is_none() {
+            return None;
+        }
+
+        let prev_anim_len = base.pending_animation_events.len();
+        let prev_style_attr = base.get_node(node_id).and_then(|n| {
+            n.element_data().and_then(|el| {
+                el.attrs
+                    .iter()
+                    .find(|a| a.name.local == blitz_dom::local_name!("style"))
+                    .map(|a| (a.name.clone(), a.value.clone()))
+            })
+        });
+        let prev_direct_style_block = if prev_style_attr.is_none() {
+            base.get_node(node_id).and_then(|n| {
+                let block = n.element_data()?.style_attribute.clone()?;
+                block
+                    .read_with(&n.guard().read())
+                    .immutable
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Some(block)
+            })
+        } else {
+            None
+        };
+
+        let now = crate::frame::native::current_time_secs();
+
+        if let Some(ref saved_block) = prev_direct_style_block {
+            base.set_style_property(node_id, "transition", "none");
+            base.set_style_property(node_id, "height", "auto");
+            base.resolve(now);
+
+            let measured = base
+                .get_node(node_id)
+                .map(|n| n.unrounded_layout().size.height as f64)
+                .unwrap_or(0.0);
+
+            if let Some(node) = base.get_node_mut(node_id) {
+                if let Some(el) = node.element_data_mut() {
+                    el.style_attribute = Some(saved_block.clone());
+                }
+                node.set_restyle_hint(blitz_dom::RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
+            }
+            base.set_style_property(node_id, "transition", "none");
+            base.resolve(now);
+
+            if let Some(node) = base.get_node_mut(node_id) {
+                if let Some(el) = node.element_data_mut() {
+                    el.style_attribute = Some(saved_block.clone());
+                }
+                node.set_restyle_hint(blitz_dom::RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
+            }
+            base.pending_animation_events.truncate(prev_anim_len);
+            return (measured > 0.0).then_some(measured);
+        }
+
+        let style_qname = prev_style_attr
+            .as_ref()
+            .map(|(q, _)| q.clone())
+            .unwrap_or_else(|| {
+                blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("style"))
+            });
+        let prev_css = prev_style_attr
+            .as_ref()
+            .map(|(_, v)| v.trim().trim_end_matches(';'))
+            .unwrap_or("");
+
+        let auto_css = if prev_css.is_empty() {
+            "transition: none; height: auto;".to_string()
+        } else {
+            format!("{prev_css}; transition: none; height: auto;")
+        };
+        base.mutate()
+            .set_attribute(node_id, style_qname.clone(), &auto_css);
+        base.resolve(now);
+
+        let measured = base
+            .get_node(node_id)
+            .map(|n| n.unrounded_layout().size.height as f64)
+            .unwrap_or(0.0);
+
+        let restore_no_transition_css = if prev_css.is_empty() {
+            "transition: none;".to_string()
+        } else {
+            format!("{prev_css}; transition: none;")
+        };
+        base.mutate()
+            .set_attribute(node_id, style_qname.clone(), &restore_no_transition_css);
+        base.resolve(now);
+
+        match prev_style_attr {
+            Some((qname, exact_val)) => {
+                base.mutate().set_attribute(node_id, qname, &exact_val);
+            }
+            None => {
+                base.mutate().clear_attribute(node_id, style_qname);
+            }
+        }
+        base.pending_animation_events.truncate(prev_anim_len);
+
+        (measured > 0.0).then_some(measured)
+    }
+
     /// Queries the first element in the document matching the given CSS selector.
     pub fn query_selector(&self, selector: &str) -> Option<crate::dom::element::Element> {
         let base = self.get_base()?;
@@ -447,10 +583,77 @@ impl Document {
         let Ok(base) = base.try_borrow() else {
             return false;
         };
-        let Some(node_id) = base.get_element_by_id(element_id) else {
+        let Some(node_id) = lookup_node_id(&base, element_id) else {
             return false;
         };
         base.active_focus_node_id() == Some(node_id)
+    }
+
+    /// Checks whether document active focus currently resides on or inside `element_id`.
+    pub fn is_focus_within(&self, element_id: &str) -> bool {
+        let Some(container) = self.element_by_id(element_id) else {
+            return false;
+        };
+        let Some(active) = self.active_element() else {
+            return false;
+        };
+        container.contains(&active)
+    }
+
+    /// Clears active keyboard focus on the native Blitz document (`active_focus_node_id()` becomes `None`).
+    ///
+    /// If `BaseDocument` is currently immutably borrowed (e.g. inside `observe_capture_events`),
+    /// schedules a deferred `clear_focus()` via `safe_spawn` rather than panicking.
+    pub fn blur_active(&self) -> Result<(), crate::error::HostError> {
+        let Some(base_rc) = self.get_base() else {
+            return Ok(());
+        };
+        if let Ok(mut base) = base_rc.try_borrow_mut() {
+            base.clear_focus();
+        } else {
+            let has_active = base_rc
+                .try_borrow()
+                .map(|b| b.active_focus_node_id().is_some())
+                .unwrap_or(true);
+            if has_active {
+                let doc_clone = base_rc.clone();
+                let _ = crate::internal::safe_spawn(async move {
+                    if let Ok(mut base) = doc_clone.try_borrow_mut() {
+                        base.clear_focus();
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns whether the native document/window is currently hidden/occluded.
+    pub fn is_document_hidden(&self) -> bool {
+        NATIVE_DOCUMENT_HIDDEN.with(|c| c.get())
+    }
+
+    /// Updates native document visibility state and notifies registered visibility observers on transitions.
+    pub fn set_document_hidden(&self, hidden: bool) {
+        let prev = NATIVE_DOCUMENT_HIDDEN.with(|c| c.replace(hidden));
+        if prev == hidden {
+            return;
+        }
+        let vis = if hidden {
+            crate::dom::observer::DocumentVisibility::Hidden
+        } else {
+            crate::dom::observer::DocumentVisibility::Visible
+        };
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.visibility_observers.values().cloned().collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb(vis);
+            }
+        }
     }
 
     /// Checks if the element with the specified ID currently matches `:focus-visible` in the Blitz DOM.
@@ -895,11 +1098,26 @@ impl Document {
 
         Ok(ordered_ids)
     }
+
+    /// Intentional no-op on Native: Blitz does not apply browser text-selection drag artifacts to `<body>`.
+    pub fn set_body_user_select_none(&self) {}
+
+    /// Intentional no-op on Native: Blitz does not apply browser text-selection drag artifacts to `<body>`.
+    pub fn restore_body_user_select(&self) {}
+
+    /// Intentional no-op on Native: Dioxus Native VDOM owns `BaseDocument` tree structure directly
+    /// and Blitz paints `position: fixed` portals in root stacking order.
+    pub fn teleport_portal_to_host(&self, _element_id: &str, _host_id: Option<&str>) {}
+
+    /// Intentional no-op on Native: Dioxus Native VDOM owns `BaseDocument` tree structure directly
+    /// and Blitz unmounts portal subtrees via VDOM reconciliation.
+    pub fn remove_portal_element_by_id(&self, _element_id: &str) {}
 }
 
 std::thread_local! {
     static CURRENT_NATIVE_DOC: RefCell<Option<Document>> = const { RefCell::new(None) };
     static CURRENT_OBSERVERS: RefCell<NativeObserverRegistry> = RefCell::new(NativeObserverRegistry::default());
+    static NATIVE_DOCUMENT_HIDDEN: Cell<bool> = const { Cell::new(false) };
     static IS_NOTIFYING_LAYOUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NEEDS_RE_EVALUATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -930,6 +1148,7 @@ struct NativeObserverRegistry {
     form_reset_observers: std::collections::HashMap<u64, FormResetObserverEntry>,
     scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
     element_scroll_observers: std::collections::HashMap<String, Vec<(u64, Rc<RefCell<Box<dyn FnMut()>>>)>>,
+    visibility_observers: std::collections::BTreeMap<u64, Rc<RefCell<Box<dyn FnMut(crate::dom::observer::DocumentVisibility)>>>>,
 }
 
 fn take_transition_observers(element_id: &str) -> Vec<TransitionObserverEntry> {
@@ -1172,6 +1391,30 @@ pub(crate) fn observe_element_scroll(
                             reg.element_scroll_observers.remove(&el_id_clone);
                         }
                     }
+            });
+        },
+    ))
+}
+
+pub(crate) fn observe_visibility_change(
+    callback: Box<dyn FnMut(crate::dom::observer::DocumentVisibility) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let sub_id = crate::internal::next_subscription_id();
+    CURRENT_OBSERVERS.with(|cell| {
+        cell.borrow_mut()
+            .visibility_observers
+            .insert(sub_id, Rc::new(RefCell::new(callback)));
+    });
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "native_visibility_observer",
+        sub_id,
+        None,
+        move || {
+            CURRENT_OBSERVERS.with(|cell| {
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.visibility_observers.remove(&sub_id);
+                }
             });
         },
     ))

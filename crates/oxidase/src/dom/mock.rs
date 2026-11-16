@@ -65,6 +65,16 @@ impl Document {
         None
     }
 
+    /// Measures pre-transform unscaled rect in mock backend.
+    pub fn measure_unscaled_rect(&self, _element_id: &str) -> Option<crate::runtime::geometry::Rect> {
+        None
+    }
+
+    /// Measures natural auto border-box height in mock backend.
+    pub fn measure_auto_height(&self, _element_id: &str) -> Option<f64> {
+        None
+    }
+
     /// Requests mock focus.
     pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
         self.set_focus_with_options(element_id, crate::dom::element::FocusOptions::default())
@@ -79,14 +89,53 @@ impl Document {
         Err(crate::error::HostError::ElementNotFound(element_id.to_string()))
     }
 
+    /// Blurs any active element in mock backend.
+    pub fn blur_active(&self) -> Result<(), crate::error::HostError> {
+        Ok(())
+    }
+
     /// Queries mock active element.
     pub fn is_element_active(&self, _element_id: &str) -> bool {
+        false
+    }
+
+    /// Queries mock focus containment.
+    pub fn is_focus_within(&self, _element_id: &str) -> bool {
         false
     }
 
     /// Queries mock `:focus-visible` state.
     pub fn is_element_focus_visible(&self, _element_id: &str) -> bool {
         false
+    }
+
+    /// Returns whether the mock document is currently marked hidden.
+    pub fn is_document_hidden(&self) -> bool {
+        MOCK_DOCUMENT_HIDDEN.with(|c| c.get())
+    }
+
+    /// Sets mock document visibility state and notifies registered visibility observers on transitions.
+    pub fn set_document_hidden(&self, hidden: bool) {
+        let prev = MOCK_DOCUMENT_HIDDEN.with(|c| c.replace(hidden));
+        if prev == hidden {
+            return;
+        }
+        let vis = if hidden {
+            crate::dom::observer::DocumentVisibility::Hidden
+        } else {
+            crate::dom::observer::DocumentVisibility::Visible
+        };
+        let handles = MOCK_VISIBILITY_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.values().cloned().collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb(vis);
+            }
+        }
     }
 
     /// Queries mock reference hidden.
@@ -131,6 +180,18 @@ impl Document {
             "Mock DOM does not support query_descendant_order".into(),
         ))
     }
+
+    /// Intentional no-op in mock backend.
+    pub fn set_body_user_select_none(&self) {}
+
+    /// Intentional no-op in mock backend.
+    pub fn restore_body_user_select(&self) {}
+
+    /// Intentional no-op in mock backend: portal tree structure is VDOM-owned outside browser DOM hosts.
+    pub fn teleport_portal_to_host(&self, _element_id: &str, _host_id: Option<&str>) {}
+
+    /// Intentional no-op in mock backend: portal tree structure is VDOM-owned outside browser DOM hosts.
+    pub fn remove_portal_element_by_id(&self, _element_id: &str) {}
 }
 
 pub(crate) fn observe_element_resize(
@@ -179,6 +240,38 @@ pub(crate) fn observe_element_scroll(
     _callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     Ok(crate::watcher_guard::WatcherGuard::new("mock_element_scroll", 0, None))
+}
+
+std::thread_local! {
+    static MOCK_DOCUMENT_HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static MOCK_VISIBILITY_OBSERVERS: std::cell::RefCell<
+        std::collections::BTreeMap<
+            u64,
+            std::rc::Rc<std::cell::RefCell<Box<dyn FnMut(crate::dom::observer::DocumentVisibility)>>>,
+        >,
+    > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+pub(crate) fn observe_visibility_change(
+    callback: Box<dyn FnMut(crate::dom::observer::DocumentVisibility) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let sub_id = crate::internal::next_subscription_id();
+    MOCK_VISIBILITY_OBSERVERS.with(|cell| {
+        cell.borrow_mut()
+            .insert(sub_id, std::rc::Rc::new(std::cell::RefCell::new(callback)));
+    });
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "mock_visibility_observer",
+        sub_id,
+        None,
+        move || {
+            MOCK_VISIBILITY_OBSERVERS.with(|cell| {
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.remove(&sub_id);
+                }
+            });
+        },
+    ))
 }
 
 

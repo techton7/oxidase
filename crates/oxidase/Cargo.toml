@@ -28,6 +28,8 @@ web-sys = { version = "0.3", features = [
     "HtmlFormElement",
     "Node",
     "DomRect",
+    "CssStyleDeclaration",
+    "VisibilityState",
     "Performance",
     "EventTarget",
     "Event",

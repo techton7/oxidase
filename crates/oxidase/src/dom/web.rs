@@ -1,5 +1,79 @@
 //! Web (`wasm32`) DOM backend implementation backed by `web-sys`.
 
+fn parse_css_transform_scale(transform: &str) -> (f64, f64) {
+    let trimmed = transform.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+        return (1.0, 1.0);
+    }
+    if let Some(inner) = trimmed
+        .strip_prefix("matrix3d(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let mut vals = [0.0_f64; 16];
+        let mut count = 0;
+        for part in inner.split(',') {
+            if count >= 16 {
+                return (1.0, 1.0);
+            }
+            let Ok(v) = part.trim().parse::<f64>() else {
+                return (1.0, 1.0);
+            };
+            vals[count] = v;
+            count += 1;
+        }
+        if count == 16 {
+            let sx = (vals[0] * vals[0] + vals[1] * vals[1] + vals[2] * vals[2]).sqrt();
+            let sy = (vals[4] * vals[4] + vals[5] * vals[5] + vals[6] * vals[6]).sqrt();
+            if sx.is_finite() && sy.is_finite() {
+                return (sx, sy);
+            }
+        }
+        return (1.0, 1.0);
+    }
+    if let Some(inner) = trimmed
+        .strip_prefix("matrix(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let mut vals = [0.0_f64; 6];
+        let mut count = 0;
+        for part in inner.split(',') {
+            if count >= 6 {
+                return (1.0, 1.0);
+            }
+            let Ok(v) = part.trim().parse::<f64>() else {
+                return (1.0, 1.0);
+            };
+            vals[count] = v;
+            count += 1;
+        }
+        if count == 6 {
+            let sx = vals[0].hypot(vals[1]);
+            let sy = vals[2].hypot(vals[3]);
+            if sx.is_finite() && sy.is_finite() {
+                return (sx, sy);
+            }
+        }
+    }
+    (1.0, 1.0)
+}
+
+fn compute_cumulative_transform_scale(win: &web_sys::Window, el: &web_sys::Element) -> (f64, f64) {
+    let mut sx = 1.0_f64;
+    let mut sy = 1.0_f64;
+    let mut cur_opt = Some(el.clone());
+    while let Some(cur) = cur_opt {
+        if let Ok(Some(style)) = win.get_computed_style(&cur)
+            && let Ok(transform) = style.get_property_value("transform")
+        {
+            let (step_x, step_y) = parse_css_transform_scale(&transform);
+            sx *= step_x;
+            sy *= step_y;
+        }
+        cur_opt = cur.parent_element();
+    }
+    (sx, sy)
+}
+
 /// Web browser Document implementation.
 #[derive(Clone, Debug, Default)]
 pub struct Document {
@@ -72,6 +146,25 @@ impl Document {
             .unwrap_or(false)
     }
 
+    /// Checks whether document active focus currently resides on or inside `element_id`.
+    pub fn is_focus_within(&self, element_id: &str) -> bool {
+        let Some(container) = self.element_by_id(element_id) else {
+            return false;
+        };
+        let Some(active) = self.active_element() else {
+            return false;
+        };
+        container.contains(&active)
+    }
+
+    /// Removes keyboard focus from the currently active element in the browser document.
+    pub fn blur_active(&self) -> Result<(), crate::error::HostError> {
+        if let Some(active) = self.active_element() {
+            active.blur_sync()?;
+        }
+        Ok(())
+    }
+
     /// Checks if the element with the specified ID currently matches `:focus-visible` in the browser document.
     pub fn is_element_focus_visible(&self, element_id: &str) -> bool {
         self.element_by_id(element_id)
@@ -119,6 +212,142 @@ impl Document {
             (0.0, 0.0)
         }
     }
+
+    /// Queries the live viewport dimensions and scroll offsets from the browser window.
+    pub fn viewport(&self) -> crate::runtime::geometry::Viewport {
+        let (width, height) = self.inner_size();
+        let (scroll_x, scroll_y) = self.viewport_scroll_offset();
+        crate::runtime::geometry::Viewport {
+            width,
+            height,
+            scroll_x,
+            scroll_y,
+        }
+    }
+
+    /// Measures the bounding client rectangle of an element by ID relative to the viewport.
+    pub fn measure_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
+        let doc = self.doc.as_ref()?;
+        let el = doc.get_element_by_id(element_id)?;
+        let br = el.get_bounding_client_rect();
+        Some(crate::runtime::geometry::Rect::new(
+            br.x(),
+            br.y(),
+            br.width(),
+            br.height(),
+        ))
+    }
+
+    /// Measures the bounding rectangle of an element with ancestor CSS `transform` scale factored out of `width`/`height`.
+    pub fn measure_unscaled_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
+        use wasm_bindgen::JsCast;
+
+        let doc = self.doc.as_ref()?;
+        let el = doc.get_element_by_id(element_id)?;
+        let br = el.get_bounding_client_rect();
+        let (sx, sy) = web_sys::window()
+            .map(|win| compute_cumulative_transform_scale(&win, &el))
+            .unwrap_or((1.0, 1.0));
+
+        let width = if sx.is_finite() && sx > 1e-4 {
+            br.width() / sx
+        } else {
+            el.clone()
+                .dyn_into::<web_sys::HtmlElement>()
+                .map(|h| h.offset_width() as f64)
+                .unwrap_or_else(|_| br.width())
+        };
+        let height = if sy.is_finite() && sy > 1e-4 {
+            br.height() / sy
+        } else {
+            el.clone()
+                .dyn_into::<web_sys::HtmlElement>()
+                .map(|h| h.offset_height() as f64)
+                .unwrap_or_else(|_| br.height())
+        };
+
+        Some(crate::runtime::geometry::Rect::new(
+            br.x(),
+            br.y(),
+            width,
+            height,
+        ))
+    }
+
+    /// Measures the unscaled natural `height: auto` border-box height of an element, restoring any inline `height` property immediately.
+    pub fn measure_auto_height(&self, element_id: &str) -> Option<f64> {
+        use wasm_bindgen::JsCast;
+
+        let doc = self.doc.as_ref()?;
+        let el = doc.get_element_by_id(element_id)?;
+        let Ok(html_el) = el.clone().dyn_into::<web_sys::HtmlElement>() else {
+            return self
+                .measure_unscaled_rect(element_id)
+                .map(|r| r.height)
+                .filter(|&h| h > 0.0);
+        };
+
+        let style = html_el.style();
+        let prev_height = style.get_property_value("height").unwrap_or_default();
+        let prev_priority = style.get_property_priority("height");
+
+        let _ = style.set_property("height", "auto");
+
+        let sy = web_sys::window()
+            .map(|win| compute_cumulative_transform_scale(&win, &el).1)
+            .unwrap_or(1.0);
+        let safe_sy = if sy.is_finite() && sy > 1e-4 { sy } else { 1.0 };
+
+        let offset_h = html_el.offset_height() as f64;
+        let rect_h = el.get_bounding_client_rect().height() / safe_sy;
+
+        if prev_height.is_empty() {
+            let _ = style.remove_property("height");
+        } else {
+            let _ = style.set_property_with_priority("height", &prev_height, &prev_priority);
+        }
+
+        if rect_h.is_finite() && rect_h > 0.0 && (rect_h - offset_h).abs() < 1.0 {
+            Some(rect_h)
+        } else if offset_h > 0.0 {
+            Some(offset_h)
+        } else if rect_h.is_finite() && rect_h > 0.0 {
+            Some(rect_h)
+        } else {
+            None
+        }
+    }
+
+    /// Checks whether any anchor element is occluded or outside viewport bounds.
+    pub fn is_reference_hidden(&self, anchor_ids: &[&str]) -> bool {
+        let vp = self.viewport();
+        for &id in anchor_ids {
+            let Some(rect) = self.measure_rect(id) else {
+                return true;
+            };
+            if rect.width <= 0.0 && rect.height <= 0.0 {
+                return true;
+            }
+            if rect.bottom < 0.0 || rect.top > vp.height {
+                return true;
+            }
+            if rect.right < 0.0 || rect.left > vp.width {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns whether the browser document is currently hidden (`document.hidden` or `visibilityState === "hidden"`).
+    pub fn is_document_hidden(&self) -> bool {
+        let Some(doc) = self.doc.as_ref() else {
+            return false;
+        };
+        doc.hidden() || doc.visibility_state() == web_sys::VisibilityState::Hidden
+    }
+
+    /// Host API parity setter for document visibility (browser owns `document.hidden` on Web).
+    pub fn set_document_hidden(&self, _hidden: bool) {}
 
     /// Returns whether any CSS animations are currently active. Always false on web FFI.
     #[inline]
@@ -186,6 +415,80 @@ impl Document {
 
         let ordered_ids = matched_candidates.into_iter().map(|(id, _)| id).collect();
         Ok(ordered_ids)
+    }
+
+    /// Suppresses text selection on `document.body` during pointer drag gestures.
+    pub fn set_body_user_select_none(&self) {
+        let Some(doc) = self
+            .doc
+            .clone()
+            .or_else(|| web_sys::window().and_then(|w| w.document()))
+        else {
+            return;
+        };
+        if let Some(body) = doc.body() {
+            let style = body.style();
+            let _ = style.set_property("user-select", "none");
+            let _ = style.set_property("-webkit-user-select", "none");
+        }
+    }
+
+    /// Restores text selection on `document.body` after pointer drag gestures complete.
+    pub fn restore_body_user_select(&self) {
+        let Some(doc) = self
+            .doc
+            .clone()
+            .or_else(|| web_sys::window().and_then(|w| w.document()))
+        else {
+            return;
+        };
+        if let Some(body) = doc.body() {
+            let style = body.style();
+            let _ = style.remove_property("user-select");
+            let _ = style.remove_property("-webkit-user-select");
+        }
+    }
+
+    /// Teleports a portal element by ID into `host_id` (if non-empty) or falls back to `#main` / `document.body`.
+    pub fn teleport_portal_to_host(&self, element_id: &str, host_id: Option<&str>) {
+        let Some(document) = self
+            .doc
+            .clone()
+            .or_else(|| web_sys::window().and_then(|w| w.document()))
+        else {
+            return;
+        };
+        let Some(el) = document.get_element_by_id(element_id) else {
+            return;
+        };
+
+        let host: Option<web_sys::Node> = match host_id.filter(|id| !id.is_empty()) {
+            Some(id) => document.get_element_by_id(id).map(Into::into),
+            None => document
+                .get_element_by_id("main")
+                .map(Into::into)
+                .or_else(|| document.body().map(Into::into)),
+        };
+
+        if let Some(host) = host
+            && el.parent_node() != Some(host.clone())
+        {
+            let _ = host.append_child(&el);
+        }
+    }
+
+    /// Removes a teleported portal element by ID from the browser DOM on cleanup.
+    pub fn remove_portal_element_by_id(&self, element_id: &str) {
+        let Some(document) = self
+            .doc
+            .clone()
+            .or_else(|| web_sys::window().and_then(|w| w.document()))
+        else {
+            return;
+        };
+        if let Some(el) = document.get_element_by_id(element_id) {
+            el.remove();
+        }
     }
 }
 
@@ -602,6 +905,56 @@ pub(crate) fn observe_element_scroll(
         move || {
             let _ = target.remove_event_listener_with_callback(
                 "scroll",
+                handler.as_ref().unchecked_ref(),
+            );
+        },
+    ))
+}
+
+pub(crate) fn observe_visibility_change(
+    mut callback: Box<dyn FnMut(crate::dom::observer::DocumentVisibility) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let sub_id = crate::internal::next_subscription_id();
+    let win =
+        web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
+    let doc = win
+        .document()
+        .ok_or_else(|| crate::error::Error::Unsupported("No document".into()))?;
+
+    let initial_hidden =
+        doc.hidden() || doc.visibility_state() == web_sys::VisibilityState::Hidden;
+    let last_hidden = std::cell::Cell::new(initial_hidden);
+    let doc_for_cb = doc.clone();
+
+    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        let hidden =
+            doc_for_cb.hidden() || doc_for_cb.visibility_state() == web_sys::VisibilityState::Hidden;
+        if last_hidden.replace(hidden) != hidden {
+            let vis = if hidden {
+                crate::dom::observer::DocumentVisibility::Hidden
+            } else {
+                crate::dom::observer::DocumentVisibility::Visible
+            };
+            callback(vis);
+        }
+    });
+
+    let doc_target: web_sys::EventTarget = doc.into();
+    let _ = doc_target.add_event_listener_with_callback(
+        "visibilitychange",
+        handler.as_ref().unchecked_ref(),
+    );
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "web_visibility_observer",
+        sub_id,
+        None,
+        move || {
+            let _ = doc_target.remove_event_listener_with_callback(
+                "visibilitychange",
                 handler.as_ref().unchecked_ref(),
             );
         },

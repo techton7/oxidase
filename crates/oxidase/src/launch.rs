@@ -146,10 +146,14 @@ fn __OxidaseNativeHostedRoot() -> Element {
         }))
     });
 
-    dioxus_native::use_window_event(move |event, _target| {
-        if let dioxus_native::winit::event::WindowEvent::RedrawRequested = event {
+    dioxus_native::use_window_event(move |event, _target| match event {
+        dioxus_native::winit::event::WindowEvent::RedrawRequested => {
             step_hosted_frame();
         }
+        dioxus_native::winit::event::WindowEvent::Occluded(occluded) => {
+            crate::dom::document().set_document_hidden(*occluded);
+        }
+        _ => {}
     });
 
     let inner = if let Some(app) = HOSTED_TARGET_APP.with(|c| c.get()) {

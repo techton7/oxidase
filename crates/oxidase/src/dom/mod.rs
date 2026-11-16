@@ -21,6 +21,9 @@ pub use element::*;
 pub mod observer;
 pub use observer::*;
 
+pub mod scroll_lock;
+pub use scroll_lock::{acquire_scroll_lock, is_scroll_locked, release_scroll_lock};
+
 pub use backend::Document;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]

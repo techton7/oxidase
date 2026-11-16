@@ -1,85 +1,93 @@
 //! Web (WASM) frame driver implementation backed by browser `requestAnimationFrame`.
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::cell::RefCell;
 use std::time::Duration;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
+use super::raf_registry::RafFrameRegistry;
 use super::types::{FrameInfo, FrameLoopError, FrameLoopGuard, FrameRequestGuard};
 
 thread_local! {
-    static LAST_WEB_RAF_MS: Cell<Option<f64>> = const { Cell::new(None) };
+    static WEB_FRAME_STATE: RefCell<RafFrameRegistry> = RefCell::new(RafFrameRegistry::default());
+    static WEB_RAF_CLOSURE: Closure<dyn Fn(f64)> = Closure::wrap(Box::new(|timestamp_ms: f64| {
+        on_animation_frame(timestamp_ms);
+    }) as Box<dyn Fn(f64)>);
+}
+
+fn cancel_browser_raf(raf_id: Option<i32>) {
+    if let Some(id) = raf_id
+        && let Some(window) = web_sys::window()
+    {
+        let _ = window.cancel_animation_frame(id);
+    }
+}
+
+fn ensure_raf_scheduled(window: &web_sys::Window) -> Result<(), FrameLoopError> {
+    let needs_schedule = WEB_FRAME_STATE.with(|cell| {
+        let state = cell.borrow();
+        state.scheduled_raf_id().is_none() && state.has_pending_frames()
+    });
+    if !needs_schedule {
+        return Ok(());
+    }
+
+    let raf_id = WEB_RAF_CLOSURE
+        .with(|cb| window.request_animation_frame(cb.as_ref().unchecked_ref()))
+        .map_err(|_| FrameLoopError::RuntimeUnavailable)?;
+
+    WEB_FRAME_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if state.has_pending_frames() && state.scheduled_raf_id().is_none() {
+            state.set_scheduled_raf_id(Some(raf_id));
+        } else {
+            drop(state);
+            let _ = window.cancel_animation_frame(raf_id);
+        }
+    });
+
+    Ok(())
+}
+
+fn on_animation_frame(timestamp_ms: f64) {
+    let cancel_raf_id =
+        WEB_FRAME_STATE.with(|cell| RafFrameRegistry::dispatch_step(cell, timestamp_ms));
+    cancel_browser_raf(cancel_raf_id);
+
+    if let Some(window) = web_sys::window() {
+        let _ = ensure_raf_scheduled(&window);
+    }
 }
 
 /// Starts an ongoing animation frame loop driven by `window.requestAnimationFrame`.
 pub fn start_frame_loop(
-    mut on_frame: impl FnMut(FrameInfo) + 'static,
+    on_frame: impl FnMut(FrameInfo) + 'static,
 ) -> Result<FrameLoopGuard, FrameLoopError> {
     let window = web_sys::window().ok_or(FrameLoopError::UnsupportedHost)?;
-    let performance = window.performance();
 
-    let running = Rc::new(RefCell::new(true));
-    let current_raf_id: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
+    let (id, active) = WEB_FRAME_STATE.with(|cell| cell.borrow_mut().register_loop(on_frame));
 
-    let start_ms = performance.as_ref().map(|p| p.now()).unwrap_or(0.0);
-    let last_time_ms = Rc::new(RefCell::new(start_ms));
-
-    type RafClosure = Closure<dyn FnMut(f64)>;
-    let closure_holder: Rc<RefCell<Option<RafClosure>>> = Rc::new(RefCell::new(None));
-    let closure_clone = closure_holder.clone();
-
-    let running_flag = running.clone();
-    let raf_id_cell = current_raf_id.clone();
-
-    *closure_clone.borrow_mut() = Some(Closure::wrap(Box::new(move |timestamp: f64| {
-        if !*running_flag.borrow() {
-            return;
-        }
-
-        let prev = *last_time_ms.borrow();
-        let dt_ms = if prev > 0.0 { (timestamp - prev).max(0.0) } else { 0.0 };
-        *last_time_ms.borrow_mut() = timestamp;
-        LAST_WEB_RAF_MS.with(|c| c.set(Some(timestamp)));
-
-        let info = FrameInfo {
-            now: Duration::from_secs_f64(timestamp / 1000.0),
-            delta: Duration::from_secs_f64(dt_ms / 1000.0),
-        };
-
-        on_frame(info);
-
-        if *running_flag.borrow()
-            && let Some(w) = web_sys::window()
-            && let Some(ref cb) = *closure_holder.borrow()
-            && let Ok(id) = w.request_animation_frame(cb.as_ref().unchecked_ref())
-        {
-            *raf_id_cell.borrow_mut() = Some(id);
-        }
-    }) as Box<dyn FnMut(f64)>));
-
-    if let Some(ref cb) = *closure_clone.borrow() {
-        match window.request_animation_frame(cb.as_ref().unchecked_ref()) {
-            Ok(id) => {
-                *current_raf_id.borrow_mut() = Some(id);
-            }
-            Err(_) => return Err(FrameLoopError::RuntimeUnavailable),
-        }
+    if let Err(err) = ensure_raf_scheduled(&window) {
+        active.set(false);
+        let (removed, cancel_raf_id) =
+            WEB_FRAME_STATE.with(|cell| cell.borrow_mut().cancel_loop(id));
+        drop(removed);
+        cancel_browser_raf(cancel_raf_id);
+        return Err(err);
     }
 
-    let cancel_running = running.clone();
-    let cancel_raf_id = current_raf_id.clone();
-    let cancel_closure = closure_clone.clone();
-
     Ok(FrameLoopGuard::new(move || {
-        *cancel_running.borrow_mut() = false;
-        if let Some(id) = cancel_raf_id.borrow_mut().take()
-            && let Some(w) = web_sys::window()
-        {
-            let _ = w.cancel_animation_frame(id);
-        }
-        let _ = cancel_closure.borrow_mut().take();
+        active.set(false);
+        let (removed, cancel_raf_id) = WEB_FRAME_STATE.with(|cell| {
+            if let Ok(mut state) = cell.try_borrow_mut() {
+                state.cancel_loop(id)
+            } else {
+                (None, None)
+            }
+        });
+        drop(removed);
+        cancel_browser_raf(cancel_raf_id);
     }))
 }
 
@@ -89,64 +97,35 @@ pub fn request_next_frame(
 ) -> Result<FrameRequestGuard, FrameLoopError> {
     let window = web_sys::window().ok_or(FrameLoopError::UnsupportedHost)?;
 
-    let current_raf_id: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
-    let on_frame_opt = Rc::new(RefCell::new(Some(on_frame)));
+    let (id, active, callback) =
+        WEB_FRAME_STATE.with(|cell| cell.borrow_mut().register_one_shot(on_frame));
 
-    let raf_id_cell = current_raf_id.clone();
-    let on_frame_cell = on_frame_opt.clone();
-
-    type RafClosure = Closure<dyn FnMut(f64)>;
-    let closure_holder: Rc<RefCell<Option<RafClosure>>> = Rc::new(RefCell::new(None));
-    let closure_clone = closure_holder.clone();
-
-    *closure_clone.borrow_mut() = Some(Closure::wrap(Box::new(move |timestamp: f64| {
-        let _ = raf_id_cell.borrow_mut().take();
-        let _ = closure_holder.borrow_mut().take();
-
-        let prev_ms = LAST_WEB_RAF_MS.with(|c| c.get());
-        let dt_ms = match prev_ms {
-            Some(prev) if prev > 0.0 => (timestamp - prev).max(0.0),
-            _ => 16.666_667,
-        };
-        LAST_WEB_RAF_MS.with(|c| c.set(Some(timestamp)));
-
-        let info = FrameInfo {
-            now: Duration::from_secs_f64(timestamp / 1000.0),
-            delta: Duration::from_secs_f64(dt_ms / 1000.0),
-        };
-
-        let cb_opt = on_frame_cell.borrow_mut().take();
-        if let Some(cb) = cb_opt {
-            cb(info);
+    if let Err(err) = ensure_raf_scheduled(&window) {
+        active.set(false);
+        if let Ok(mut cb) = callback.try_borrow_mut() {
+            let _ = cb.take();
         }
-    }) as Box<dyn FnMut(f64)>));
-
-    if let Some(ref cb) = *closure_clone.borrow() {
-        match window.request_animation_frame(cb.as_ref().unchecked_ref()) {
-            Ok(id) => {
-                *current_raf_id.borrow_mut() = Some(id);
-            }
-            Err(_) => return Err(FrameLoopError::RuntimeUnavailable),
-        }
+        let (removed, cancel_raf_id) =
+            WEB_FRAME_STATE.with(|cell| cell.borrow_mut().cancel_one_shot(id));
+        drop(removed);
+        cancel_browser_raf(cancel_raf_id);
+        return Err(err);
     }
 
-    let cancel_raf_id = current_raf_id.clone();
-    let cancel_closure = closure_clone.clone();
-    let cancel_cb = on_frame_opt.clone();
-
     Ok(FrameRequestGuard::new(move || {
-        if let Ok(mut c) = cancel_cb.try_borrow_mut() {
-            c.take();
+        active.set(false);
+        if let Ok(mut cb) = callback.try_borrow_mut() {
+            let _ = cb.take();
         }
-        if let Ok(mut r) = cancel_raf_id.try_borrow_mut()
-            && let Some(id) = r.take()
-            && let Some(w) = web_sys::window()
-        {
-            let _ = w.cancel_animation_frame(id);
-        }
-        if let Ok(mut cl) = cancel_closure.try_borrow_mut() {
-            cl.take();
-        }
+        let (removed, cancel_raf_id) = WEB_FRAME_STATE.with(|cell| {
+            if let Ok(mut state) = cell.try_borrow_mut() {
+                state.cancel_one_shot(id)
+            } else {
+                (None, None)
+            }
+        });
+        drop(removed);
+        cancel_browser_raf(cancel_raf_id);
     }))
 }
 
@@ -168,6 +147,10 @@ pub fn step_hosted_frame() -> Duration {
 
 /// Returns whether any frame requests are pending.
 pub fn has_pending_frames() -> bool {
-    false
+    WEB_FRAME_STATE.with(|cell| cell.borrow().has_pending_frames())
 }
 
+/// Returns `true` when frames are driven automatically by an active browser host (`window`).
+pub fn is_host_driven() -> bool {
+    web_sys::window().is_some()
+}

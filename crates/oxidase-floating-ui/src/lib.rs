@@ -22,5 +22,8 @@ pub use compute_position::compute_position;
 pub use detect_overflow::*;
 pub use error::*;
 pub use geometry::*;
-pub use platform::*;
+#[cfg(target_arch = "wasm32")]
+pub use platform::web::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub use platform::native::*;
 pub use types::*;

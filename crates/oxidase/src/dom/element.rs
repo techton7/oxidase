@@ -281,15 +281,36 @@ impl Element {
         }
     }
 
-    /// Removes keyboard focus from the element.
-    pub async fn blur(&self) -> Result<(), HostError> {
+    /// Synchronously removes keyboard focus from this element when it holds active focus.
+    ///
+    /// On Native, calls `BaseDocument::clear_focus()` so `active_focus_node_id()` becomes `None`
+    /// and `:focus`/`:focus-visible`/`:focus-within` states clear cleanly. If `BaseDocument` is
+    /// currently immutably borrowed (e.g. inside `observe_capture_events`), defers `clear_focus()`
+    /// via `safe_spawn` rather than panicking.
+    pub fn blur_sync(&self) -> Result<(), HostError> {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let mut base = doc.borrow_mut();
-                if base.active_focus_node_id() == Some(*node_id) {
-                    let root = base.root_node().id;
-                    base.set_focus_to(root);
+                let target_nid = *node_id;
+                if let Ok(mut base) = doc.try_borrow_mut() {
+                    if base.active_focus_node_id() == Some(target_nid) {
+                        base.clear_focus();
+                    }
+                } else {
+                    let is_focused = doc
+                        .try_borrow()
+                        .map(|b| b.active_focus_node_id() == Some(target_nid))
+                        .unwrap_or(true);
+                    if is_focused {
+                        let doc_clone = doc.clone();
+                        let _ = crate::internal::safe_spawn(async move {
+                            if let Ok(mut base) = doc_clone.try_borrow_mut()
+                                && base.active_focus_node_id() == Some(target_nid)
+                            {
+                                base.clear_focus();
+                            }
+                        });
+                    }
                 }
                 Ok(())
             }
@@ -302,11 +323,74 @@ impl Element {
                 Ok(())
             }
             ElementTarget::Mounted(handle) => {
-                let _ = handle.set_focus(false).await;
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.blur_sync();
+                }
+                let handle = handle.clone();
+                let _ = crate::internal::safe_spawn(async move {
+                    let _ = handle.set_focus(false).await;
+                });
                 Ok(())
             }
             #[cfg(not(target_arch = "wasm32"))]
             ElementTarget::Mock => Ok(()),
+        }
+    }
+
+    /// Removes keyboard focus from the element.
+    pub async fn blur(&self) -> Result<(), HostError> {
+        match &self.target {
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.blur_sync();
+                }
+                let _ = handle.set_focus(false).await;
+                Ok(())
+            }
+            _ => self.blur_sync(),
+        }
+    }
+
+    /// Checks whether `other` is an inclusive descendant of `self` (`self == other` or contained within `self`).
+    pub fn contains(&self, other: &Element) -> bool {
+        let _ = other;
+        match (&self.target, &other.target) {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            (
+                ElementTarget::Native {
+                    doc,
+                    node_id: container_id,
+                },
+                ElementTarget::Native {
+                    doc: other_doc,
+                    node_id: other_id,
+                },
+            ) => {
+                if !Rc::ptr_eq(doc, other_doc) {
+                    return false;
+                }
+                let Ok(base) = doc.try_borrow() else {
+                    return false;
+                };
+                if base.get_node(*container_id).is_none() {
+                    return false;
+                }
+                let mut cur = Some(*other_id);
+                while let Some(nid) = cur {
+                    if nid == *container_id {
+                        return true;
+                    }
+                    cur = base.get_node(nid).and_then(|n| n.parent);
+                }
+                false
+            }
+            #[cfg(target_arch = "wasm32")]
+            (ElementTarget::Web(el), ElementTarget::Web(other_el)) => el.contains(Some(other_el)),
+            _ => false,
         }
     }
 
@@ -534,23 +618,19 @@ impl Element {
         }
     }
 
-    /// Scrolls the element into the visible viewport.
-    pub async fn scroll_into_view(&self) -> Result<(), HostError> {
-        self.scroll_into_view_with_options(ScrollIntoViewOptions::default())
-            .await
+    /// Synchronously scrolls the element into the visible viewport with default options when backed by a live DOM handle.
+    pub fn scroll_into_view_sync(&self) -> Result<(), HostError> {
+        self.scroll_into_view_sync_with_options(ScrollIntoViewOptions::default())
     }
 
-    /// Scrolls the element into the visible viewport with specific options.
-    pub async fn scroll_into_view_with_options(
+    /// Synchronously scrolls the element into the visible viewport with specific options when backed by a live DOM handle.
+    pub fn scroll_into_view_sync_with_options(
         &self,
         options: ScrollIntoViewOptions,
     ) -> Result<(), HostError> {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let Ok(mut base) = doc.try_borrow_mut() else {
-                    return Ok(());
-                };
                 let behavior = match options.behavior {
                     ScrollBehavior::Auto => blitz_dom::ScrollBehavior::Auto,
                     ScrollBehavior::Instant => blitz_dom::ScrollBehavior::Instant,
@@ -568,7 +648,17 @@ impl Element {
                     ScrollLogicalPosition::End => blitz_dom::ScrollLogicalPosition::End,
                     ScrollLogicalPosition::Nearest => blitz_dom::ScrollLogicalPosition::Nearest,
                 };
-                base.scroll_into_view(*node_id, behavior, block, inline);
+                if let Ok(mut base) = doc.try_borrow_mut() {
+                    base.scroll_into_view(*node_id, behavior, block, inline);
+                } else {
+                    let doc_clone = doc.clone();
+                    let nid = *node_id;
+                    let _ = crate::internal::safe_spawn(async move {
+                        if let Ok(mut base) = doc_clone.try_borrow_mut() {
+                            base.scroll_into_view(nid, behavior, block, inline);
+                        }
+                    });
+                }
                 Ok(())
             }
             #[cfg(target_arch = "wasm32")]
@@ -595,6 +685,49 @@ impl Element {
                 Ok(())
             }
             ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.scroll_into_view_sync_with_options(options);
+                }
+                let behavior = match options.behavior {
+                    ScrollBehavior::Smooth => dioxus::prelude::ScrollBehavior::Smooth,
+                    ScrollBehavior::Auto | ScrollBehavior::Instant => {
+                        dioxus::prelude::ScrollBehavior::Instant
+                    }
+                };
+                let handle = handle.clone();
+                let _ = crate::internal::safe_spawn(async move {
+                    let _ = handle.scroll_to(behavior).await;
+                });
+                Ok(())
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => {
+                let _ = options;
+                Ok(())
+            }
+        }
+    }
+
+    /// Scrolls the element into the visible viewport.
+    pub async fn scroll_into_view(&self) -> Result<(), HostError> {
+        self.scroll_into_view_with_options(ScrollIntoViewOptions::default())
+            .await
+    }
+
+    /// Scrolls the element into the visible viewport with specific options.
+    pub async fn scroll_into_view_with_options(
+        &self,
+        options: ScrollIntoViewOptions,
+    ) -> Result<(), HostError> {
+        match &self.target {
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.scroll_into_view_sync_with_options(options);
+                }
                 let behavior = match options.behavior {
                     ScrollBehavior::Smooth => dioxus::prelude::ScrollBehavior::Smooth,
                     ScrollBehavior::Auto | ScrollBehavior::Instant => {
@@ -604,11 +737,7 @@ impl Element {
                 let _ = handle.scroll_to(behavior).await;
                 Ok(())
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            ElementTarget::Mock => {
-                let _ = options;
-                Ok(())
-            }
+            _ => self.scroll_into_view_sync_with_options(options),
         }
     }
 

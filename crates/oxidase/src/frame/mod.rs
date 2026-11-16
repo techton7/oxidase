@@ -20,20 +20,22 @@ pub use types::{FrameInfo, FrameLoopError, FrameLoopGuard, FrameRequestGuard};
 mod hooks;
 pub use hooks::{next_frame, use_frame, NextFrameFuture};
 
+pub(crate) mod raf_registry;
+
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
 pub use web::{
-    has_pending_frames, request_next_frame, set_host_redraw_requester, start_frame_loop,
-    step_hosted_frame, tick, HostRedrawGuard,
+    has_pending_frames, is_host_driven, request_next_frame, set_host_redraw_requester,
+    start_frame_loop, step_hosted_frame, tick, HostRedrawGuard,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-mod native;
+pub(crate) mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-    has_pending_frames, request_next_frame, set_host_redraw_requester, start_frame_loop,
-    step_hosted_frame, tick, HostRedrawGuard,
+    has_pending_frames, is_host_driven, request_next_frame, set_host_redraw_requester,
+    start_frame_loop, step_hosted_frame, tick, HostRedrawGuard,
 };
 
 #[cfg(test)]

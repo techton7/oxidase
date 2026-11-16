@@ -199,6 +199,27 @@ pub fn has_pending_frames() -> bool {
     FRAME_STATE.with(|cell| cell.borrow().has_pending_frames())
 }
 
+/// Returns `true` when a live host redraw requester is actively registered,
+/// or `false` in headless/manual `tick(dt)` mode.
+pub fn is_host_driven() -> bool {
+    FRAME_STATE.with(|cell| {
+        cell.try_borrow()
+            .map(|state| {
+                state
+                    .redraw_requester
+                    .as_ref()
+                    .is_some_and(|(active, _)| active.get())
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Returns the current monotonic native frame clock time in seconds.
+#[cfg_attr(not(feature = "native"), allow(dead_code))]
+pub(crate) fn current_time_secs() -> f64 {
+    FRAME_STATE.with(|c| c.try_borrow().map(|s| s.now.as_secs_f64()).unwrap_or(0.0))
+}
+
 /// Dispatches a single hosted animation frame tied to host redraw.
 ///
 /// Automatically measures real elapsed time since the last frame, advances the monotonic clock,

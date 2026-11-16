@@ -6,9 +6,30 @@
 //! 3. Transition and animation lifecycle with guaranteed fallback timeouts
 //! 4. Form reset observation on enclosing forms
 
-use crate::error::Result;
+use crate::error::{HostError, Result};
 use crate::runtime::geometry::Rect;
 use crate::watcher_guard::WatcherGuard;
+
+/// Host document visibility state (`document.visibilityState` on Web, window occlusion on Native).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentVisibility {
+    Visible,
+    Hidden,
+}
+
+impl DocumentVisibility {
+    /// Returns `true` when the document is hidden/occluded.
+    #[inline]
+    pub const fn is_hidden(&self) -> bool {
+        matches!(self, Self::Hidden)
+    }
+
+    /// Returns `true` when the document is visible.
+    #[inline]
+    pub const fn is_visible(&self) -> bool {
+        matches!(self, Self::Visible)
+    }
+}
 
 /// Element resize entry containing the target element ID and its updated bounding/content rect.
 #[derive(Clone, Debug, PartialEq)]
@@ -109,6 +130,13 @@ pub fn observe_element_scroll(
     callback: impl FnMut() + 'static,
 ) -> Result<WatcherGuard> {
     crate::dom::backend::observe_element_scroll(element_id, Box::new(callback))
+}
+
+/// Observes host document visibility transitions across Web, Native, and Mock backends.
+pub fn observe_visibility_change(
+    callback: impl FnMut(DocumentVisibility) + 'static,
+) -> std::result::Result<WatcherGuard, HostError> {
+    crate::dom::backend::observe_visibility_change(Box::new(callback))
 }
 
 

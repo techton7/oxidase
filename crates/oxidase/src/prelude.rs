@@ -14,6 +14,7 @@ pub use crate::scroll::Scrollable;
 pub use crate::window::{window, Window};
 pub use crate::runtime::geometry::{Point, Rect, Size};
 pub use crate::frame::{next_frame, use_frame, FrameInfo, NextFrameFuture};
+pub use crate::time::{monotonic_now_ms, unix_epoch_ms, MonotonicInstant};
 pub use crate::use_watcher;
 pub use crate::watcher_guard::WatcherGuard;
 pub use crate::watcher::{

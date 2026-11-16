@@ -284,4 +284,96 @@ fn test_use_frame_virtual_dom_lifecycle() {
     assert_eq!(*frame_count.borrow(), 3, "unmounted component must not receive ticks");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_is_host_driven_lifecycle() {
+    assert!(
+        !is_host_driven(),
+        "headless native mode without a redraw requester must report is_host_driven() == false"
+    );
+
+    let guard = set_host_redraw_requester(|| {});
+    assert!(
+        is_host_driven(),
+        "holding HostRedrawGuard must report is_host_driven() == true"
+    );
+
+    drop(guard);
+    assert!(
+        !is_host_driven(),
+        "dropping HostRedrawGuard must restore is_host_driven() == false"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_concurrent_request_next_frame_delta_parity() {
+    // 1. Headless manual tick(dt): 4 concurrent one-shot waiters in the same frame
+    let manual_records: Rc<RefCell<Vec<(usize, FrameInfo)>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut guards = Vec::new();
+    for idx in 0..4 {
+        let rec = manual_records.clone();
+        guards.push(
+            request_next_frame(move |info| {
+                rec.borrow_mut().push((idx, info));
+            })
+            .expect("request_next_frame should succeed"),
+        );
+    }
+
+    tick(Duration::from_millis(20));
+
+    let m = manual_records.borrow();
+    assert_eq!(m.len(), 4);
+    let first_now = m[0].1.now;
+    for (i, &(idx, info)) in m.iter().enumerate() {
+        assert_eq!(idx, i);
+        assert_eq!(info.now, first_now);
+        assert_eq!(
+            info.delta,
+            Duration::from_millis(20),
+            "concurrent manual waiter {idx} must observe exact 20ms delta (never 0)"
+        );
+    }
+    drop(m);
+    drop(guards);
+
+    // 2. Hosted step_hosted_frame(): 4 concurrent one-shot waiters in the same redraw step
+    let redraw_guard = set_host_redraw_requester(|| {});
+    assert!(is_host_driven());
+
+    let hosted_records: Rc<RefCell<Vec<(usize, FrameInfo)>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut hosted_guards = Vec::new();
+    for idx in 0..4 {
+        let rec = hosted_records.clone();
+        hosted_guards.push(
+            request_next_frame(move |info| {
+                rec.borrow_mut().push((idx, info));
+            })
+            .expect("request_next_frame should succeed in hosted mode"),
+        );
+    }
+
+    let dispatched_dt = step_hosted_frame();
+    assert!(dispatched_dt >= Duration::from_millis(1));
+
+    let h = hosted_records.borrow();
+    assert_eq!(h.len(), 4);
+    let hosted_now = h[0].1.now;
+    for (i, &(idx, info)) in h.iter().enumerate() {
+        assert_eq!(idx, i);
+        assert_eq!(info.now, hosted_now);
+        assert_eq!(
+            info.delta, dispatched_dt,
+            "concurrent hosted waiter {idx} must observe identical dispatched_dt (never 0)"
+        );
+        assert_ne!(info.delta, Duration::ZERO);
+    }
+    drop(h);
+    drop(hosted_guards);
+    drop(redraw_guard);
+    assert!(!is_host_driven());
+}
+
+
 
