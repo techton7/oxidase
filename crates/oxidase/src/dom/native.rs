@@ -137,6 +137,7 @@ impl Document {
             click_count: i32,
             armed_pointer_click: bool,
             armed_key_click: bool,
+            armed_label_click: bool,
         }
 
         let click_state = RefCell::new(NativeBridgeClickState::default());
@@ -189,6 +190,8 @@ impl Document {
                 return;
             }
 
+            let mut pending_reset_form_nid: Option<blitz_dom::NodeId> = None;
+
             let Some(kind) = (match &event.data {
                 DomEventData::PointerDown(pe) => {
                     let pointer_type = match pe.id {
@@ -213,8 +216,10 @@ impl Document {
                             st.mousedown_pos = (x, y);
                             st.armed_pointer_click = true;
                             st.armed_key_click = false;
+                            st.armed_label_click = false;
                         } else {
                             st.armed_pointer_click = false;
+                            st.armed_label_click = false;
                         }
                     }
                     Some(crate::dom::observer::CaptureEventKind::PointerDown {
@@ -224,20 +229,36 @@ impl Document {
                     })
                 }
                 DomEventData::Click(pe) => {
-                    let (is_trusted, detail) = if let Ok(mut st) = click_state.try_borrow_mut() {
-                        if st.armed_pointer_click {
-                            st.armed_pointer_click = false;
-                            st.armed_key_click = false;
-                            (true, st.click_count.max(1))
-                        } else if st.armed_key_click {
-                            st.armed_key_click = false;
-                            (true, 0)
+                    let hit_label = chain.iter().any(|&nid| {
+                        base_doc
+                            .get_node(nid)
+                            .and_then(|n| n.element_data())
+                            .is_some_and(|el| el.name.local == blitz_dom::local_name!("label"))
+                    });
+                    let (is_trusted, detail, allow_reset) =
+                        if let Ok(mut st) = click_state.try_borrow_mut() {
+                            if st.armed_pointer_click {
+                                st.armed_pointer_click = false;
+                                st.armed_key_click = false;
+                                st.armed_label_click = hit_label;
+                                (true, st.click_count.max(1), true)
+                            } else if st.armed_key_click {
+                                st.armed_key_click = false;
+                                st.armed_label_click = false;
+                                (true, 0, true)
+                            } else if st.armed_label_click {
+                                st.armed_label_click = false;
+                                (false, 0, true)
+                            } else {
+                                (false, 0, false)
+                            }
                         } else {
-                            (false, 0)
-                        }
-                    } else {
-                        (true, 1)
-                    };
+                            (true, 1, true)
+                        };
+                    if allow_reset {
+                        pending_reset_form_nid =
+                            resolve_reset_button_form_node_id(base_doc, chain);
+                    }
                     Some(crate::dom::observer::CaptureEventKind::Click {
                         is_trusted,
                         detail,
@@ -288,6 +309,9 @@ impl Document {
                     last_synced_len: Rc::new(Cell::new(0)),
                 };
                 doc.dispatch_capture_event_with_path(kind, event.target, path_ids);
+                if let Some(form_nid) = pending_reset_form_nid {
+                    dispatch_form_reset_with_base_ref(base_doc, None, Some(form_nid));
+                }
             }
         })));
     }
@@ -1029,7 +1053,7 @@ impl Document {
         }
     }
 
-    /// Dispatches a form reset signal to registered form reset observers.
+    /// Dispatches a form reset signal to registered form reset observers matching `form_element_id`.
     pub fn dispatch_form_reset(&self, form_element_id: &str) {
         let Some(base) = self.get_base() else {
             return;
@@ -1037,35 +1061,30 @@ impl Document {
         let Ok(base_ref) = base.try_borrow() else {
             return;
         };
-        let form_node_id = base_ref.get_element_by_id(form_element_id);
-
-        let handles = CURRENT_OBSERVERS.with(|cell| {
-            let Ok(reg) = cell.try_borrow() else {
-                return Vec::new();
-            };
-            let mut matching = Vec::new();
-            for obs in reg.form_reset_observers.values() {
-                if let Some(expected_form_id) = &obs.form_id {
-                    if expected_form_id == form_element_id {
-                        matching.push(obs.callback.clone());
-                    }
-                } else if let Some(fnid) = form_node_id
-                    && let Some(el_nid) = base_ref.get_element_by_id(&obs.element_id) {
-                        let chain = base_ref.node_chain(el_nid);
-                        if chain.contains(&fnid) {
-                            matching.push(obs.callback.clone());
-                        }
-                    }
-            }
-            matching
-        });
+        let form_node_id = base_ref
+            .get_element_by_id(form_element_id)
+            .or_else(|| base_ref.query_selector(&format!("#{form_element_id}")).ok().flatten());
+        let handles = collect_matching_form_reset_callbacks(
+            &base_ref,
+            Some(form_element_id),
+            form_node_id,
+        );
         drop(base_ref);
+        invoke_form_reset_callbacks(handles);
+    }
 
-        for handle in handles {
-            if let Ok(mut cb) = handle.try_borrow_mut() {
-                cb();
-            }
-        }
+    /// Dispatches a form reset signal by `<form>` `NodeId` (supporting both ID-bearing `<form id="...">`
+    /// and anonymous `<form>` ancestors without an `id` attribute).
+    pub fn dispatch_form_reset_by_node_id(&self, form_node_id: blitz_dom::NodeId) {
+        let Some(base) = self.get_base() else {
+            return;
+        };
+        let Ok(base_ref) = base.try_borrow() else {
+            return;
+        };
+        let handles = collect_matching_form_reset_callbacks(&base_ref, None, Some(form_node_id));
+        drop(base_ref);
+        invoke_form_reset_callbacks(handles);
     }
 
     /// Dispatches a passive pointer move coordinate update to all registered pointer move observers.
@@ -1198,6 +1217,291 @@ impl Document {
     /// Intentional no-op on Native: Dioxus Native VDOM owns `BaseDocument` tree structure directly
     /// and Blitz unmounts portal subtrees via VDOM reconciliation.
     pub fn remove_portal_element_by_id(&self, _element_id: &str) {}
+
+    /// Serializes live submittable `(name, value)` entries for the `<form>` matching `form_element_id`
+    /// following WHATWG HTML `FormData` / Blitz `construct_entry_list` rules.
+    pub fn collect_form_data(
+        &self,
+        form_element_id: &str,
+    ) -> Result<Vec<(String, String)>, crate::error::HostError> {
+        let base_rc = self.get_base().ok_or_else(|| {
+            crate::error::HostError::Unsupported("No active native document".into())
+        })?;
+        let base = base_rc.borrow();
+        let form_node_id = base
+            .get_element_by_id(form_element_id)
+            .or_else(|| base.query_selector(&format!("#{form_element_id}")).ok().flatten())
+            .ok_or_else(|| crate::error::HostError::ElementNotFound(form_element_id.to_string()))?;
+
+        let is_form = base
+            .get_node(form_node_id)
+            .and_then(|n| n.element_data())
+            .is_some_and(|el| el.name.local == blitz_dom::local_name!("form"));
+        if !is_form {
+            return Err(crate::error::HostError::Unsupported(format!(
+                "Element '{form_element_id}' is not an HTMLFormElement"
+            )));
+        }
+
+        let mut entries = Vec::new();
+        let mut stack = vec![base.root_node().id];
+
+        while let Some(control_id) = stack.pop() {
+            let Some(node) = base.get_node(control_id) else {
+                continue;
+            };
+            for &child_id in node.children.iter().rev() {
+                stack.push(child_id);
+            }
+
+            let Some(element) = node.element_data() else {
+                continue;
+            };
+            let tag: &str = &element.name.local;
+            if !matches!(tag, "input" | "select" | "textarea" | "button") {
+                continue;
+            }
+
+            // Form ownership check (explicit `form` attribute overrides ancestor `<form>`)
+            let belongs_to_form =
+                if let Some(explicit_fid) = element.attr(blitz_dom::local_name!("form")) {
+                    !explicit_fid.is_empty() && explicit_fid == form_element_id
+                } else {
+                    nearest_form_ancestor(&base, control_id) == Some(form_node_id)
+                };
+            if !belongs_to_form {
+                continue;
+            }
+
+            // Skip controls inside `<datalist>` or disabled controls/fieldsets
+            if has_datalist_ancestor(&base, control_id)
+                || base.is_form_control_disabled(control_id)
+                || element.has_attr(blitz_dom::local_name!("disabled"))
+            {
+                continue;
+            }
+
+            let element_type = element.attr(blitz_dom::local_name!("type"));
+
+            // Non-submitter buttons and button/image inputs are excluded in `new FormData(form)`
+            if tag == "button"
+                || (tag == "input"
+                    && element_type.is_some_and(|t| {
+                        t.eq_ignore_ascii_case("button")
+                            || t.eq_ignore_ascii_case("submit")
+                            || t.eq_ignore_ascii_case("reset")
+                            || t.eq_ignore_ascii_case("image")
+                    }))
+            {
+                continue;
+            }
+
+            let Some(name) = element
+                .attr(blitz_dom::local_name!("name"))
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+
+            let is_checkbox_or_radio = tag == "input"
+                && element_type.is_some_and(|t| {
+                    t.eq_ignore_ascii_case("checkbox") || t.eq_ignore_ascii_case("radio")
+                });
+
+            if is_checkbox_or_radio {
+                let is_checked = element.checkbox_input_checked().unwrap_or_else(|| {
+                    element
+                        .attr(blitz_dom::local_name!("checked"))
+                        .is_some_and(|v| !v.eq_ignore_ascii_case("false"))
+                });
+                if !is_checked {
+                    continue;
+                }
+                let value = element.attr(blitz_dom::local_name!("value")).unwrap_or("on");
+                entries.push((name.to_string(), value.to_string()));
+                continue;
+            }
+
+            if tag == "input"
+                && element_type.is_some_and(|t| t.eq_ignore_ascii_case("hidden"))
+                && name.eq_ignore_ascii_case("_charset_")
+            {
+                entries.push((name.to_string(), "UTF-8".to_string()));
+                continue;
+            }
+
+            if let Some(text) = element.text_input_data() {
+                entries.push((name.to_string(), text.editor.text().to_string()));
+            } else if let Some(value) = element.attr(blitz_dom::local_name!("value")) {
+                entries.push((name.to_string(), value.to_string()));
+            } else if tag == "textarea" {
+                let mut buf = String::new();
+                for &child_id in &node.children {
+                    if let Some(child) = base.get_node(child_id)
+                        && let Some(td) = child.text_data()
+                    {
+                        buf.push_str(&td.content);
+                    }
+                }
+                entries.push((name.to_string(), buf));
+            }
+        }
+
+        Ok(entries)
+    }
+}
+
+fn collect_matching_form_reset_callbacks(
+    base_ref: &BaseDocument,
+    explicit_form_id: Option<&str>,
+    form_node_id: Option<blitz_dom::NodeId>,
+) -> Vec<Rc<RefCell<Box<dyn FnMut()>>>> {
+    let resolved_id_owned = explicit_form_id.map(ToString::to_string).or_else(|| {
+        form_node_id.and_then(|fnid| {
+            base_ref.get_node(fnid).and_then(|node| {
+                node.element_data()
+                    .and_then(|el| el.id.as_deref().map(ToString::to_string))
+                    .or_else(|| node.attr(blitz_dom::local_name!("id")).map(ToString::to_string))
+                    .filter(|id| !id.is_empty())
+            })
+        })
+    });
+    let resolved_form_id = resolved_id_owned.as_deref();
+
+    CURRENT_OBSERVERS.with(|cell| {
+        let Ok(reg) = cell.try_borrow() else {
+            return Vec::new();
+        };
+        let mut matching = Vec::new();
+        for obs in reg.form_reset_observers.values() {
+            if let Some(expected_form_id) = &obs.form_id {
+                if resolved_form_id == Some(expected_form_id.as_str()) {
+                    matching.push(obs.callback.clone());
+                }
+            } else if let Some(fnid) = form_node_id
+                && let Some(el_nid) = base_ref.get_element_by_id(&obs.element_id)
+            {
+                let explicit_form_attr = base_ref
+                    .get_node(el_nid)
+                    .and_then(|n| n.element_data())
+                    .and_then(|el| el.attr(blitz_dom::local_name!("form")));
+                let belongs = if let Some(explicit_fid) = explicit_form_attr {
+                    !explicit_fid.is_empty() && resolved_form_id == Some(explicit_fid)
+                } else {
+                    nearest_form_ancestor(base_ref, el_nid) == Some(fnid)
+                };
+                if belongs {
+                    matching.push(obs.callback.clone());
+                }
+            }
+        }
+        matching
+    })
+}
+
+fn invoke_form_reset_callbacks(handles: Vec<Rc<RefCell<Box<dyn FnMut()>>>>) {
+    for handle in handles {
+        if let Ok(mut cb) = handle.try_borrow_mut() {
+            cb();
+        }
+    }
+}
+
+fn dispatch_form_reset_with_base_ref(
+    base_ref: &BaseDocument,
+    explicit_form_id: Option<&str>,
+    form_node_id: Option<blitz_dom::NodeId>,
+) {
+    let handles = collect_matching_form_reset_callbacks(base_ref, explicit_form_id, form_node_id);
+    invoke_form_reset_callbacks(handles);
+}
+
+fn nearest_form_ancestor(
+    base: &BaseDocument,
+    node_id: blitz_dom::NodeId,
+) -> Option<blitz_dom::NodeId> {
+    let mut cur = base.get_node(node_id).and_then(|n| n.parent);
+    while let Some(nid) = cur {
+        let Some(node) = base.get_node(nid) else {
+            break;
+        };
+        if node
+            .element_data()
+            .is_some_and(|el| el.name.local == blitz_dom::local_name!("form"))
+        {
+            return Some(nid);
+        }
+        cur = node.parent;
+    }
+    None
+}
+
+fn has_datalist_ancestor(base: &BaseDocument, node_id: blitz_dom::NodeId) -> bool {
+    let mut cur = base.get_node(node_id).and_then(|n| n.parent);
+    while let Some(nid) = cur {
+        let Some(node) = base.get_node(nid) else {
+            break;
+        };
+        if node
+            .element_data()
+            .is_some_and(|el| el.name.local == blitz_dom::local_name!("datalist"))
+        {
+            return true;
+        }
+        cur = node.parent;
+    }
+    false
+}
+
+fn resolve_reset_button_form_node_id(
+    base_doc: &BaseDocument,
+    chain: &[blitz_dom::NodeId],
+) -> Option<blitz_dom::NodeId> {
+    for &nid in chain {
+        let Some(node) = base_doc.get_node(nid) else {
+            continue;
+        };
+        let Some(el) = node.element_data() else {
+            continue;
+        };
+        let tag: &str = &el.name.local;
+        if tag == "button" || tag == "input" {
+            let input_type = el.attr(blitz_dom::local_name!("type"));
+            if tag == "input"
+                && input_type.is_some_and(|t| t.eq_ignore_ascii_case("hidden"))
+            {
+                continue;
+            }
+            if !input_type.is_some_and(|t| t.eq_ignore_ascii_case("reset")) {
+                return None;
+            }
+            if base_doc.is_form_control_disabled(nid)
+                || el.has_attr(blitz_dom::local_name!("disabled"))
+            {
+                return None;
+            }
+            if let Some(explicit_fid) = el.attr(blitz_dom::local_name!("form")) {
+                if explicit_fid.is_empty() {
+                    return None;
+                }
+                return base_doc
+                    .get_element_by_id(explicit_fid)
+                    .filter(|&fnid| {
+                        base_doc
+                            .get_node(fnid)
+                            .and_then(|n| n.element_data())
+                            .is_some_and(|fe| fe.name.local == blitz_dom::local_name!("form"))
+                    });
+            }
+            return nearest_form_ancestor(base_doc, nid);
+        }
+        if matches!(tag, "select" | "textarea" | "summary")
+            || (tag == "a" && el.has_attr(blitz_dom::local_name!("href")))
+        {
+            return None;
+        }
+    }
+    None
 }
 
 std::thread_local! {

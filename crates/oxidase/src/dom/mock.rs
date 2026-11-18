@@ -192,6 +192,16 @@ impl Document {
 
     /// Intentional no-op in mock backend: portal tree structure is VDOM-owned outside browser DOM hosts.
     pub fn remove_portal_element_by_id(&self, _element_id: &str) {}
+
+    /// Serializes form data entries in mock backend. Fails closed with Unsupported.
+    pub fn collect_form_data(
+        &self,
+        _form_element_id: &str,
+    ) -> Result<Vec<(String, String)>, crate::error::HostError> {
+        Err(crate::error::HostError::Unsupported(
+            "Mock DOM does not support collect_form_data".into(),
+        ))
+    }
 }
 
 pub(crate) fn observe_element_resize(

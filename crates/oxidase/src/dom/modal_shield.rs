@@ -7,9 +7,17 @@
 
 use std::cell::RefCell;
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 const SKIPPED_ELEMENTS: [&str; 6] = ["link", "meta", "noscript", "script", "style", "template"];
 
 #[inline]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 fn is_skipped_tag(local_name: &str) -> bool {
     SKIPPED_ELEMENTS
         .iter()

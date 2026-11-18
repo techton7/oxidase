@@ -490,6 +490,50 @@ impl Document {
             el.remove();
         }
     }
+
+    /// Serializes live submittable `(name, value)` entries for the `<form>` matching `form_element_id`
+    /// using the browser's native `FormData` algorithm.
+    pub fn collect_form_data(
+        &self,
+        form_element_id: &str,
+    ) -> Result<Vec<(String, String)>, crate::error::HostError> {
+        use wasm_bindgen::JsCast;
+
+        let doc = self
+            .doc
+            .clone()
+            .or_else(|| web_sys::window().and_then(|w| w.document()))
+            .ok_or_else(|| {
+                crate::error::HostError::Unsupported("No active browser document".into())
+            })?;
+        let el = doc
+            .get_element_by_id(form_element_id)
+            .ok_or_else(|| crate::error::HostError::ElementNotFound(form_element_id.to_string()))?;
+        let form = el.dyn_into::<web_sys::HtmlFormElement>().map_err(|_| {
+            crate::error::HostError::Unsupported(format!(
+                "Element '{form_element_id}' is not an HTMLFormElement"
+            ))
+        })?;
+        let form_data = web_sys::FormData::new_with_form(&form).map_err(|err| {
+            crate::error::HostError::Unsupported(format!("FormData construction failed: {err:?}"))
+        })?;
+
+        let mut entries = Vec::new();
+        let iter = js_sys::try_iter(&form_data).ok().flatten().ok_or_else(|| {
+            crate::error::HostError::Unsupported("FormData is not iterable".into())
+        })?;
+        for item in iter {
+            if let Ok(pair) = item
+                && let Some(arr) = pair.dyn_ref::<js_sys::Array>()
+                && arr.length() >= 2
+                && let Some(name) = arr.get(0).as_string()
+                && let Some(val) = arr.get(1).as_string()
+            {
+                entries.push((name, val));
+            }
+        }
+        Ok(entries)
+    }
 }
 
 pub(crate) fn observe_element_resize(

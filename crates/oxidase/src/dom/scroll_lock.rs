@@ -7,6 +7,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 const MANAGED_PROPERTIES: [&str; 7] = [
     "padding-right",
     "margin-right",
@@ -433,6 +437,10 @@ pub(crate) struct InlineStyleDeclarations {
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 impl InlineStyleDeclarations {
     pub(crate) fn parse(raw_css: &str) -> Self {
         let mut entries: Vec<(String, String, String)> = Vec::new();
@@ -546,6 +554,10 @@ impl InlineStyleDeclarations {
     }
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 fn normalize_prop_name(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.starts_with("--") {
@@ -555,6 +567,10 @@ fn normalize_prop_name(raw: &str) -> String {
     }
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 fn split_value_and_priority(raw_val: &str) -> (String, String) {
     let trimmed = raw_val.trim();
     if trimmed.len() >= 10 {
@@ -569,6 +585,10 @@ fn split_value_and_priority(raw_val: &str) -> (String, String) {
     (trimmed.to_string(), String::new())
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 fn split_css_declarations(raw_css: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;

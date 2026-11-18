@@ -4,10 +4,11 @@ use oxidase::dom::modal_shield::{
     suppress_others,
 };
 use oxidase::dom::{
-    ScrollLockOptions, acquire_scroll_lock, acquire_scroll_lock_with_options,
-    is_body_pointer_events_locked, is_scroll_locked, mouse_event_detail, mouse_event_target,
-    release_scroll_lock,
+    ScrollLockOptions, acquire_scroll_lock, is_body_pointer_events_locked, is_scroll_locked,
+    mouse_event_detail, mouse_event_target, release_scroll_lock,
 };
+#[cfg(feature = "native")]
+use oxidase::dom::acquire_scroll_lock_with_options;
 use oxidase::watcher::{DismissEvent, DocumentDismissEvent};
 use std::time::Duration;
 

@@ -1040,6 +1040,10 @@ pub fn mouse_event_target(evt: &dioxus::prelude::MouseData) -> Option<Element> {
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct NativeMouseClickTracker {
     last_mousedown_time: Option<std::time::Instant>,
@@ -1048,6 +1052,10 @@ pub(crate) struct NativeMouseClickTracker {
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 impl Default for NativeMouseClickTracker {
     fn default() -> Self {
         Self {
@@ -1059,6 +1067,10 @@ impl Default for NativeMouseClickTracker {
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(feature = "native")),
+    allow(dead_code)
+)]
 impl NativeMouseClickTracker {
     pub(crate) fn record_primary_press(
         &mut self,
