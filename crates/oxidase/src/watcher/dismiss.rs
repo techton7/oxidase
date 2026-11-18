@@ -1,17 +1,26 @@
 //! Document dismiss watcher for popovers, dialogs, selects, and tooltips.
 //!
-//! Intercepts pointerdown, focusin, and Escape key interactions with boundary ID suppression.
+//! Intercepts pointerdown, click, focusin, and Escape key interactions with boundary ID
+//! suppression, frame-0 opening self-dismiss protection, mouse/pen pointerdown/click
+//! deduplication, touch-tap `< 10.0px` capture reconciliation, and untrusted click
+//! microtask deferral.
 
-use crate::dom::observer::{observe_capture_events, CaptureEventKind};
+use crate::dom::observer::{CaptureEventKind, observe_capture_events};
 use crate::error::Result;
 use crate::watcher_guard::WatcherGuard;
 use serde::{Deserialize, Serialize};
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 /// Event emitted when an outside interaction or escape key dismissal occurs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DismissEvent {
     PointerDown {
+        #[serde(rename = "pathIds", default)]
+        path_ids: Vec<String>,
+    },
+    Click {
         #[serde(rename = "pathIds", default)]
         path_ids: Vec<String>,
     },
@@ -26,7 +35,9 @@ impl DismissEvent {
     /// Checks whether this event occurred outside all provided boundary element IDs.
     pub fn is_outside_boundary(&self, boundary_ids: &[&str]) -> bool {
         match self {
-            Self::PointerDown { path_ids } | Self::FocusIn { path_ids } => {
+            Self::PointerDown { path_ids }
+            | Self::Click { path_ids }
+            | Self::FocusIn { path_ids } => {
                 if boundary_ids.is_empty() {
                     return true;
                 }
@@ -39,9 +50,9 @@ impl DismissEvent {
     /// Returns the outermost target element ID if present.
     pub fn target_id(&self) -> Option<&str> {
         match self {
-            Self::PointerDown { path_ids } | Self::FocusIn { path_ids } => {
-                path_ids.first().map(|s| s.as_str())
-            }
+            Self::PointerDown { path_ids }
+            | Self::Click { path_ids }
+            | Self::FocusIn { path_ids } => path_ids.first().map(|s| s.as_str()),
             Self::Escape => None,
         }
     }
@@ -71,6 +82,13 @@ impl DismissOptions {
     }
 }
 
+#[derive(Clone, Debug)]
+struct PendingTouchTap {
+    client_x: f64,
+    client_y: f64,
+    path_ids: Vec<String>,
+}
+
 /// Watches global document interactions and emits dismissal signals when interactions occur outside boundaries.
 pub fn watch_document_dismiss(
     boundary_ids: &[&str],
@@ -82,30 +100,194 @@ pub fn watch_document_dismiss(
 /// Watches document dismissal with explicit configuration options.
 pub fn watch_document_dismiss_with_options(
     options: DismissOptions,
-    mut on_event: impl FnMut(DismissEvent) + 'static,
+    on_event: impl FnMut(DismissEvent) + 'static,
 ) -> Result<WatcherGuard> {
     let boundary_ids = options.boundary_ids;
     let listen_escape = options.listen_escape;
     let listen_pointer = options.listen_pointer;
     let listen_focusin = options.listen_focusin;
 
+    let active = Rc::new(Cell::new(true));
+    let on_event_cell: Rc<RefCell<Box<dyn FnMut(DismissEvent)>>> =
+        Rc::new(RefCell::new(Box::new(on_event)));
+
+    let mut has_seen_pointer_down = false;
+    let mut dedup_next_pointer_click = false;
+    let mut suppress_inside_press_click = false;
+    let mut pending_touch_tap: Option<PendingTouchTap> = None;
     let mut pending_pointer_focus_path: Option<Vec<String>> = None;
 
-    observe_capture_events(move |event| {
+    let active_for_cb = active.clone();
+    let on_event_for_cb = on_event_cell.clone();
+
+    let inner_guard = observe_capture_events(move |event| {
+        if !active_for_cb.get() {
+            return;
+        }
         match event.kind {
-            CaptureEventKind::PointerDown => {
+            CaptureEventKind::PointerDown {
+                pointer_type,
+                client_x,
+                client_y,
+            } => {
+                has_seen_pointer_down = true;
+                // Settle/reset any previous in-flight outside pointer or touch state (`cf522ba2`).
+                pending_touch_tap = None;
+                dedup_next_pointer_click = false;
+                suppress_inside_press_click = false;
+
                 if !listen_pointer {
                     pending_pointer_focus_path = None;
                     return;
                 }
                 let is_inside = event.path_ids.iter().any(|id| boundary_ids.contains(id));
-                if !is_inside {
-                    pending_pointer_focus_path = Some(event.path_ids.clone());
-                    on_event(DismissEvent::PointerDown {
-                        path_ids: event.path_ids,
-                    });
-                } else {
+                if is_inside {
                     pending_pointer_focus_path = None;
+                    suppress_inside_press_click = true;
+                } else {
+                    pending_pointer_focus_path = Some(event.path_ids.clone());
+                    if pointer_type.eq_ignore_ascii_case("touch") {
+                        pending_touch_tap = Some(PendingTouchTap {
+                            client_x,
+                            client_y,
+                            path_ids: event.path_ids,
+                        });
+                    } else {
+                        dedup_next_pointer_click = true;
+                        if let Ok(mut cb) = on_event_for_cb.try_borrow_mut() {
+                            cb(DismissEvent::PointerDown {
+                                path_ids: event.path_ids,
+                            });
+                        }
+                    }
+                }
+            }
+            CaptureEventKind::Click {
+                is_trusted,
+                detail,
+                client_x,
+                client_y,
+            } => {
+                pending_pointer_focus_path = None;
+                let was_inside_press = std::mem::replace(&mut suppress_inside_press_click, false);
+                let was_deduped_mouse = std::mem::replace(&mut dedup_next_pointer_click, false);
+                let touch_tap = pending_touch_tap.take();
+
+                if !listen_pointer {
+                    return;
+                }
+
+                if was_inside_press {
+                    return;
+                }
+
+                if was_deduped_mouse && is_trusted && detail > 0 {
+                    return;
+                }
+
+                if let Some(tap) = touch_tap {
+                    let dist = (client_x - tap.client_x).hypot(client_y - tap.client_y);
+                    if dist < 10.0 {
+                        let path_ids = if event.path_ids.is_empty() {
+                            tap.path_ids
+                        } else {
+                            event.path_ids
+                        };
+                        let is_inside = path_ids.iter().any(|id| boundary_ids.contains(id));
+                        if !is_inside
+                            && let Ok(mut cb) = on_event_for_cb.try_borrow_mut()
+                        {
+                            cb(DismissEvent::Click { path_ids });
+                        }
+                    }
+                    return;
+                }
+
+                // Frame-0 / opening-press self-dismiss guard (`d715acbf`):
+                // A trusted pointer click (`detail > 0`) arriving before any capture-phase
+                // `PointerDown` was observed belongs to the press that mounted this watcher.
+                if !has_seen_pointer_down && is_trusted && detail > 0 {
+                    has_seen_pointer_down = true;
+                    return;
+                }
+
+                let is_inside = event.path_ids.iter().any(|id| boundary_ids.contains(id));
+                if is_inside {
+                    return;
+                }
+
+                let path_ids = event.path_ids;
+                if !is_trusted {
+                    // Programmatic / untrusted clicks defer to a microtask so synchronous
+                    // `.click()` calls inside an active render/commit never conflict (`6c24e5f4`),
+                    // aborting cleanly if the watcher tears down first (`723afd00`).
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let active_check = active_for_cb.clone();
+                        let cb_deferred = on_event_for_cb.clone();
+                        let path_ids_clone = path_ids.clone();
+                        if crate::internal::safe_spawn(async move {
+                            if active_check.get()
+                                && let Ok(mut cb) = cb_deferred.try_borrow_mut()
+                            {
+                                cb(DismissEvent::Click {
+                                    path_ids: path_ids_clone,
+                                });
+                            }
+                        })
+                        .is_none()
+                        {
+                            use wasm_bindgen::closure::Closure;
+                            let active_js = active_for_cb.clone();
+                            let cb_js = on_event_for_cb.clone();
+                            let holder: Rc<
+                                RefCell<Option<Closure<dyn FnMut(wasm_bindgen::JsValue)>>>,
+                            > = Rc::new(RefCell::new(None));
+                            let holder_cleanup = holder.clone();
+                            let closure = Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(
+                                move |_val: wasm_bindgen::JsValue| {
+                                    let _ = holder_cleanup.borrow_mut().take();
+                                    if active_js.get()
+                                        && let Ok(mut cb) = cb_js.try_borrow_mut()
+                                    {
+                                        cb(DismissEvent::Click {
+                                            path_ids: path_ids.clone(),
+                                        });
+                                    }
+                                },
+                            );
+                            let _ =
+                                js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)
+                                    .then(&closure);
+                            *holder.borrow_mut() = Some(closure);
+                        }
+                        return;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if dioxus::core::Runtime::try_current().is_some() {
+                            let active_check = active_for_cb.clone();
+                            let cb_deferred = on_event_for_cb.clone();
+                            let path_ids_clone = path_ids.clone();
+                            if crate::internal::safe_spawn(async move {
+                                if active_check.get()
+                                    && let Ok(mut cb) = cb_deferred.try_borrow_mut()
+                                {
+                                    cb(DismissEvent::Click {
+                                        path_ids: path_ids_clone,
+                                    });
+                                }
+                            })
+                            .is_some()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                if let Ok(mut cb) = on_event_for_cb.try_borrow_mut() {
+                    cb(DismissEvent::Click { path_ids });
                 }
             }
             CaptureEventKind::FocusIn => {
@@ -122,21 +304,37 @@ pub fn watch_document_dismiss_with_options(
                     return;
                 }
                 let is_inside = event.path_ids.iter().any(|id| boundary_ids.contains(id));
-                if !is_inside {
-                    on_event(DismissEvent::FocusIn {
+                if !is_inside
+                    && let Ok(mut cb) = on_event_for_cb.try_borrow_mut()
+                {
+                    cb(DismissEvent::FocusIn {
                         path_ids: event.path_ids,
                     });
                 }
             }
             CaptureEventKind::KeyDown { key } => {
                 pending_pointer_focus_path = None;
+                pending_touch_tap = None;
                 if !listen_escape {
                     return;
                 }
-                if key == "Escape" || key == "Esc" {
-                    on_event(DismissEvent::Escape);
+                if (key == "Escape" || key == "Esc")
+                    && let Ok(mut cb) = on_event_for_cb.try_borrow_mut()
+                {
+                    cb(DismissEvent::Escape);
                 }
             }
         }
-    })
+    })?;
+
+    let sub_id = inner_guard.subscription_id();
+    Ok(WatcherGuard::with_cleanup(
+        "watch_document_dismiss",
+        sub_id,
+        None,
+        move || {
+            active.set(false);
+            inner_guard.stop();
+        },
+    ))
 }

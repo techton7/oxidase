@@ -39,15 +39,57 @@ pub struct ResizeEntry {
 }
 
 /// The kind of global capture interaction intercepted.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CaptureEventKind {
-    PointerDown,
+    PointerDown {
+        pointer_type: String,
+        client_x: f64,
+        client_y: f64,
+    },
+    Click {
+        is_trusted: bool,
+        detail: i32,
+        client_x: f64,
+        client_y: f64,
+    },
     FocusIn,
-    KeyDown { key: String },
+    KeyDown {
+        key: String,
+    },
+}
+
+impl CaptureEventKind {
+    /// Convenience constructor for a mouse `PointerDown` capture event at `(client_x, client_y)`.
+    pub fn mouse_down(client_x: f64, client_y: f64) -> Self {
+        Self::PointerDown {
+            pointer_type: "mouse".to_string(),
+            client_x,
+            client_y,
+        }
+    }
+
+    /// Convenience constructor for a touch `PointerDown` capture event at `(client_x, client_y)`.
+    pub fn touch_down(client_x: f64, client_y: f64) -> Self {
+        Self::PointerDown {
+            pointer_type: "touch".to_string(),
+            client_x,
+            client_y,
+        }
+    }
+
+    /// Convenience constructor for a `Click` capture event.
+    pub fn click(is_trusted: bool, detail: i32, client_x: f64, client_y: f64) -> Self {
+        Self::Click {
+            is_trusted,
+            detail,
+            client_x,
+            client_y,
+        }
+    }
 }
 
 /// Intercepted capture-phase event carrying target information and resolved ancestor path IDs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CaptureEvent {
     pub kind: CaptureEventKind,
     pub target_id: Option<String>,

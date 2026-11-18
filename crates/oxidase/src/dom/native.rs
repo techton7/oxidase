@@ -130,6 +130,16 @@ impl Document {
         let Some(base) = self.get_base() else {
             return;
         };
+        #[derive(Default)]
+        struct NativeBridgeClickState {
+            last_mousedown_time: Option<std::time::Instant>,
+            mousedown_pos: (f32, f32),
+            click_count: i32,
+            armed_pointer_click: bool,
+            armed_key_click: bool,
+        }
+
+        let click_state = RefCell::new(NativeBridgeClickState::default());
         let weak_inner = Rc::downgrade(&self.inner);
         base.borrow_mut().set_capture_hook(Some(Rc::new(move |base_doc, event, chain| {
             if let DomEventData::Scroll(_) = &event.data {
@@ -162,8 +172,79 @@ impl Document {
                 return;
             }
 
+            if let DomEventData::PointerCancel(_) = &event.data {
+                if let Ok(mut st) = click_state.try_borrow_mut() {
+                    st.armed_pointer_click = false;
+                }
+                return;
+            }
+
+            if let DomEventData::KeyUp(key_event) = &event.data {
+                use dioxus::prelude::keyboard_types::Key;
+                if matches!(&key_event.key, Key::Character(s) if s == " ")
+                    && let Ok(mut st) = click_state.try_borrow_mut()
+                {
+                    st.armed_key_click = true;
+                }
+                return;
+            }
+
             let Some(kind) = (match &event.data {
-                DomEventData::PointerDown(_) => Some(crate::dom::observer::CaptureEventKind::PointerDown),
+                DomEventData::PointerDown(pe) => {
+                    let pointer_type = match pe.id {
+                        blitz_traits::events::BlitzPointerId::Mouse => "mouse".to_string(),
+                        blitz_traits::events::BlitzPointerId::Pen => "pen".to_string(),
+                        blitz_traits::events::BlitzPointerId::Finger(_) => "touch".to_string(),
+                    };
+                    if let Ok(mut st) = click_state.try_borrow_mut() {
+                        if pe.button == blitz_traits::events::MouseEventButton::Main {
+                            let (x, y) = (pe.page_x(), pe.page_y());
+                            st.click_count = if st
+                                .last_mousedown_time
+                                .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500))
+                                && (st.mousedown_pos.0 - x).abs() <= 2.0
+                                && (st.mousedown_pos.1 - y).abs() <= 2.0
+                            {
+                                st.click_count.saturating_add(1)
+                            } else {
+                                1
+                            };
+                            st.last_mousedown_time = Some(std::time::Instant::now());
+                            st.mousedown_pos = (x, y);
+                            st.armed_pointer_click = true;
+                            st.armed_key_click = false;
+                        } else {
+                            st.armed_pointer_click = false;
+                        }
+                    }
+                    Some(crate::dom::observer::CaptureEventKind::PointerDown {
+                        pointer_type,
+                        client_x: pe.client_x() as f64,
+                        client_y: pe.client_y() as f64,
+                    })
+                }
+                DomEventData::Click(pe) => {
+                    let (is_trusted, detail) = if let Ok(mut st) = click_state.try_borrow_mut() {
+                        if st.armed_pointer_click {
+                            st.armed_pointer_click = false;
+                            st.armed_key_click = false;
+                            (true, st.click_count.max(1))
+                        } else if st.armed_key_click {
+                            st.armed_key_click = false;
+                            (true, 0)
+                        } else {
+                            (false, 0)
+                        }
+                    } else {
+                        (true, 1)
+                    };
+                    Some(crate::dom::observer::CaptureEventKind::Click {
+                        is_trusted,
+                        detail,
+                        client_x: pe.client_x() as f64,
+                        client_y: pe.client_y() as f64,
+                    })
+                }
                 DomEventData::FocusIn(_) => {
                     if base_doc.try_root_element().map(|el| el.id) == Some(event.target) {
                         None
@@ -173,6 +254,11 @@ impl Document {
                 }
                 DomEventData::KeyDown(key_event) => {
                     use dioxus::prelude::keyboard_types::{Key, NamedKey};
+                    if matches!(&key_event.key, Key::Named(NamedKey::Enter))
+                        && let Ok(mut st) = click_state.try_borrow_mut()
+                    {
+                        st.armed_key_click = true;
+                    }
                     let key = match &key_event.key {
                         Key::Named(NamedKey::Escape) => "Escape".to_string(),
                         Key::Named(named) => format!("{named:?}"),

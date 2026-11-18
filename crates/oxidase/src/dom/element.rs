@@ -1010,6 +1010,126 @@ pub fn is_interactive_button_target(evt: &dioxus::prelude::PointerData) -> bool 
         .is_some()
 }
 
+/// Extracts the originating DOM target `Element` from a Dioxus `MouseData` payload across Web and Native hosts.
+pub fn mouse_event_target(evt: &dioxus::prelude::MouseData) -> Option<Element> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let web_event: &web_sys::MouseEvent = evt
+            .downcast::<web_sys::MouseEvent>()
+            .or_else(|| evt.downcast::<web_sys::PointerEvent>().map(|pe| pe.as_ref()))?;
+        let target = web_event.target()?;
+        if let Ok(el) = target.clone().dyn_into::<web_sys::Element>() {
+            return Some(Element::from_web(el));
+        }
+        let node = target.dyn_into::<web_sys::Node>().ok()?;
+        let parent_el = node.parent_element()?;
+        return Some(Element::from_web(parent_el));
+    }
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    {
+        let native_event = evt.downcast::<dioxus_native::NativePointerData>()?;
+        let nh = native_event.target_node_handle()?;
+        return Some(Element::from_native(nh.base_document(), nh.node_id()));
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "native")))]
+    {
+        let _ = evt;
+        None
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeMouseClickTracker {
+    last_mousedown_time: Option<std::time::Instant>,
+    mousedown_position: (f64, f64),
+    click_count: i32,
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+impl Default for NativeMouseClickTracker {
+    fn default() -> Self {
+        Self {
+            last_mousedown_time: None,
+            mousedown_position: (0.0, 0.0),
+            click_count: 0,
+        }
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+impl NativeMouseClickTracker {
+    pub(crate) fn record_primary_press(
+        &mut self,
+        now: std::time::Instant,
+        x: f64,
+        y: f64,
+    ) -> i32 {
+        if let Some(prev_time) = self.last_mousedown_time {
+            let elapsed = now.saturating_duration_since(prev_time);
+            if elapsed < std::time::Duration::from_micros(50)
+                && (self.mousedown_position.0 - x).abs() == 0.0
+                && (self.mousedown_position.1 - y).abs() == 0.0
+                && self.click_count >= 1
+            {
+                return self.click_count;
+            }
+            if elapsed < std::time::Duration::from_millis(500)
+                && (self.mousedown_position.0 - x).abs() <= 2.0
+                && (self.mousedown_position.1 - y).abs() <= 2.0
+            {
+                self.click_count = self.click_count.saturating_add(1);
+            } else {
+                self.click_count = 1;
+            }
+        } else {
+            self.click_count = 1;
+        }
+        self.last_mousedown_time = Some(now);
+        self.mousedown_position = (x, y);
+        self.click_count
+    }
+}
+
+/// Returns the W3C UIEvent `detail` click count (`1` for single click, `2` for double click, etc.)
+/// for a Dioxus `MouseData` payload across Web and Blitz Native hosts.
+pub fn mouse_event_detail(evt: &dioxus::prelude::MouseData) -> i32 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(web_event) = evt
+            .downcast::<web_sys::MouseEvent>()
+            .or_else(|| evt.downcast::<web_sys::PointerEvent>().map(|pe| pe.as_ref()))
+        {
+            return web_event.detail();
+        }
+        return 1;
+    }
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    {
+        std::thread_local! {
+            static CLICK_TRACKER: std::cell::RefCell<NativeMouseClickTracker> =
+                std::cell::RefCell::new(NativeMouseClickTracker::default());
+        }
+        let Some(native_event) = evt.downcast::<dioxus_native::NativePointerData>() else {
+            return 1;
+        };
+        let pe = native_event.inner();
+        if pe.button != blitz_traits::events::MouseEventButton::Main {
+            return 1;
+        }
+        let x = pe.page_x() as f64;
+        let y = pe.page_y() as f64;
+        let now = std::time::Instant::now();
+        return CLICK_TRACKER.with(|cell| cell.borrow_mut().record_primary_press(now, x, y));
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "native")))]
+    {
+        let _ = evt;
+        1
+    }
+}
+
 impl Scrollable for Element {
     fn scroll_x(&self) -> impl Future<Output = Result<f64, HostError>> {
         self.scroll_x()
@@ -1122,6 +1242,39 @@ mod tests {
         let suppress_ring = FocusOptions::with_focus_visible(false, Some(false));
         assert!(!suppress_ring.prevent_scroll);
         assert_eq!(suppress_ring.focus_visible, Some(false));
+    }
+
+    #[test]
+    fn test_native_mouse_click_tracker_parity() {
+        use std::time::{Duration, Instant};
+
+        let mut tracker = NativeMouseClickTracker::default();
+        let t0 = Instant::now();
+
+        // First primary press -> detail 1
+        assert_eq!(tracker.record_primary_press(t0, 100.0, 200.0), 1);
+
+        // Repeated read within < 50us at identical coords -> deduplicated (still 1)
+        assert_eq!(
+            tracker.record_primary_press(t0 + Duration::from_micros(10), 100.0, 200.0),
+            1
+        );
+
+        // Second press within 500ms and <= 2.0px -> detail 2
+        let t1 = t0 + Duration::from_millis(120);
+        assert_eq!(tracker.record_primary_press(t1, 101.5, 198.5), 2);
+
+        // Third press within 500ms and <= 2.0px -> detail 3
+        let t2 = t1 + Duration::from_millis(150);
+        assert_eq!(tracker.record_primary_press(t2, 102.0, 200.0), 3);
+
+        // Press > 2.0px away resets to detail 1
+        let t3 = t2 + Duration::from_millis(80);
+        assert_eq!(tracker.record_primary_press(t3, 106.0, 200.0), 1);
+
+        // Press >= 500ms later resets to detail 1
+        let t4 = t3 + Duration::from_millis(500);
+        assert_eq!(tracker.record_primary_press(t4, 106.0, 200.0), 1);
     }
 }
 

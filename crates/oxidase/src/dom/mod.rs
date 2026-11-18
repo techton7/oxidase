@@ -21,8 +21,17 @@ pub use element::*;
 pub mod observer;
 pub use observer::*;
 
+pub mod modal_shield;
+pub use modal_shield::{
+    ModalShieldGuard, ModalShieldMode, hide_others, inert_others, shield_others_with_mode,
+    suppress_others,
+};
+
 pub mod scroll_lock;
-pub use scroll_lock::{acquire_scroll_lock, is_scroll_locked, release_scroll_lock};
+pub use scroll_lock::{
+    ScrollLockOptions, acquire_scroll_lock, acquire_scroll_lock_with_options,
+    is_body_pointer_events_locked, is_scroll_locked, release_scroll_lock,
+};
 
 pub use backend::Document;
 

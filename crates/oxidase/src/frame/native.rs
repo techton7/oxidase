@@ -45,7 +45,7 @@ impl HostRedrawGuard {
 impl Drop for HostRedrawGuard {
     fn drop(&mut self) {
         self.active.set(false);
-        FRAME_STATE.with(|cell| {
+        let _ = FRAME_STATE.try_with(|cell| {
             if let Ok(mut state) = cell.try_borrow_mut() {
                 state.redraw_requester = None;
                 state.last_real_time = None;
@@ -116,7 +116,7 @@ pub fn start_frame_loop(
         let cancel_active = active.clone();
         Ok(FrameLoopGuard::new(move || {
             cancel_active.set(false);
-            FRAME_STATE.with(|inner| {
+            let _ = FRAME_STATE.try_with(|inner| {
                 if let Ok(mut s) = inner.try_borrow_mut() {
                     s.loop_subscribers.remove(&id);
                 }
@@ -160,7 +160,7 @@ pub fn request_next_frame(
             if let Ok(mut cb) = cancel_cb.try_borrow_mut() {
                 let _ = cb.take();
             }
-            FRAME_STATE.with(|inner| {
+            let _ = FRAME_STATE.try_with(|inner| {
                 if let Ok(mut s) = inner.try_borrow_mut() {
                     s.one_shot_requests.remove(&id);
                 }

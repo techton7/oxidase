@@ -564,7 +564,27 @@ pub(crate) fn observe_capture_events(
         let path_ids = read_path_ids(&event);
         let target_id = path_ids.first().cloned();
         cb_pointer.borrow_mut()(crate::dom::observer::CaptureEvent {
-            kind: crate::dom::observer::CaptureEventKind::PointerDown,
+            kind: crate::dom::observer::CaptureEventKind::PointerDown {
+                pointer_type: event.pointer_type(),
+                client_x: f64::from(event.client_x()),
+                client_y: f64::from(event.client_y()),
+            },
+            target_id,
+            path_ids,
+        });
+    });
+
+    let cb_click = cb_cell.clone();
+    let click_handler = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |event: web_sys::MouseEvent| {
+        let path_ids = read_path_ids(&event);
+        let target_id = path_ids.first().cloned();
+        cb_click.borrow_mut()(crate::dom::observer::CaptureEvent {
+            kind: crate::dom::observer::CaptureEventKind::Click {
+                is_trusted: event.is_trusted(),
+                detail: event.detail(),
+                client_x: f64::from(event.client_x()),
+                client_y: f64::from(event.client_y()),
+            },
             target_id,
             path_ids,
         });
@@ -603,6 +623,11 @@ pub(crate) fn observe_capture_events(
         &capture_opts,
     );
     let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
+        "click",
+        click_handler.as_ref().unchecked_ref(),
+        &capture_opts,
+    );
+    let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
         "focusin",
         focus_handler.as_ref().unchecked_ref(),
         &capture_opts,
@@ -622,6 +647,11 @@ pub(crate) fn observe_capture_events(
             let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
                 "pointerdown",
                 pointer_handler.as_ref().unchecked_ref(),
+                true,
+            );
+            let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
+                "click",
+                click_handler.as_ref().unchecked_ref(),
                 true,
             );
             let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(

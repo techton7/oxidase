@@ -229,11 +229,12 @@ fn test_native_capture_event_chain_pre_dispatch() {
         .expect("capture observer registration must succeed");
 
         // Dispatch a capture-phase event on the nested child
-        ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, trigger_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(25.0, 25.0), trigger_id);
 
         let events = captured.borrow();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].kind, CaptureEventKind::PointerDown);
+        assert_eq!(events[0].kind, CaptureEventKind::mouse_down(25.0, 25.0));
         assert_eq!(events[0].target_id.as_deref(), Some("trigger"));
         // Ancestor chain must preserve order from target up to container
         assert!(
@@ -320,14 +321,16 @@ fn test_watch_document_dismiss_boundary_filtering() {
         .expect("watch_document_dismiss must succeed");
 
         // 1. Click inside popover -> should be suppressed
-        ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, inside_btn_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(70.0, 70.0), inside_btn_id);
         assert!(
             dismiss_events.borrow().is_empty(),
             "Interactions inside boundary must NOT trigger dismiss"
         );
 
         // 2. Click outside popover -> triggers dismiss
-        ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, outside_btn_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(310.0, 310.0), outside_btn_id);
         assert_eq!(dismiss_events.borrow().len(), 1);
         match &dismiss_events.borrow()[0] {
             DismissEvent::PointerDown { path_ids } => {
@@ -691,12 +694,14 @@ fn test_watcher_guard_drop_cancels_subscription() {
             })
             .expect("registration must succeed");
 
-            ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, btn_id);
+            ctx.doc
+                .dispatch_capture_event(CaptureEventKind::mouse_down(10.0, 10.0), btn_id);
             assert_eq!(*counter.borrow(), 1, "Active observer must receive event");
         } // _guard drops here
 
         // Dispatch after drop
-        ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, btn_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(10.0, 10.0), btn_id);
         assert_eq!(
             *counter.borrow(),
             1,
@@ -720,13 +725,15 @@ fn test_watcher_guard_manual_stop_unregisters_immediately() {
         })
         .expect("registration must succeed");
 
-        ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, btn_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(10.0, 10.0), btn_id);
         assert_eq!(*counter.borrow(), 1);
 
         // Manually stop the guard
         guard.stop();
 
-        ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, btn_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(10.0, 10.0), btn_id);
         assert_eq!(
             *counter.borrow(),
             1,
@@ -1140,7 +1147,8 @@ fn test_observer_two_phase_dispatch_reentrancy_safe() {
             })
             .expect("capture observer registration must succeed");
 
-            ctx.doc.dispatch_capture_event(CaptureEventKind::PointerDown, input_id);
+            ctx.doc
+                .dispatch_capture_event(CaptureEventKind::mouse_down(15.0, 15.0), input_id);
             assert!(*sub_registered.borrow(), "Capture observer re-entrancy must execute cleanly");
         }
 
