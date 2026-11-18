@@ -25,7 +25,7 @@ mod floating_cross_host_test;
 mod watcher_substrate_test;
 
 #[test]
-fn all_top_level_integration_tests_are_registered() {
+fn all_test_files_are_included() {
     let tests_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let mut actual = std::fs::read_dir(tests_dir)
         .expect("read integration test directory")
