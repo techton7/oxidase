@@ -714,7 +714,6 @@ pub(crate) fn observe_capture_events(
 
 pub(crate) fn observe_transition_lifecycle(
     element_id: &str,
-    fallback_timeout_ms: u64,
     callback: Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::closure::Closure;
@@ -724,7 +723,10 @@ pub(crate) fn observe_transition_lifecycle(
     let win = web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
     let doc = win.document().ok_or_else(|| crate::error::Error::Unsupported("No document".into()))?;
 
+    type LifecycleCallback =
+        Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent) + 'static>;
     let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(Some(callback)));
+    let raf_cell = std::rc::Rc::new(std::cell::RefCell::new(None));
     let target_el = doc.get_element_by_id(element_id);
 
     let mut anim_end_handler = None;
@@ -734,9 +736,15 @@ pub(crate) fn observe_transition_lifecycle(
 
     if let Some(ref el) = target_el {
         let cb_end = cb_cell.clone();
+        let raf_end = raf_cell.clone();
+        let listener_target = el.clone();
         let on_end = Closure::<dyn FnMut(web_sys::AnimationEvent)>::new(move |event: web_sys::AnimationEvent| {
-            let cb = cb_end.borrow_mut().take();
+            if event.target().is_none_or(|target| target != listener_target.clone().into()) {
+                return;
+            }
+            let cb: Option<LifecycleCallback> = cb_end.borrow_mut().take();
             if let Some(mut cb) = cb {
+                let _ = raf_end.borrow_mut().take();
                 cb(crate::dom::observer::TransitionLifecycleEvent::AnimationEnd {
                     animation_name: event.animation_name(),
                 });
@@ -747,9 +755,15 @@ pub(crate) fn observe_transition_lifecycle(
         anim_end_handler = Some((target.clone(), on_end));
 
         let cb_cancel = cb_cell.clone();
+        let raf_cancel = raf_cell.clone();
+        let listener_target = el.clone();
         let on_cancel = Closure::<dyn FnMut(web_sys::AnimationEvent)>::new(move |event: web_sys::AnimationEvent| {
-            let cb = cb_cancel.borrow_mut().take();
+            if event.target().is_none_or(|target| target != listener_target.clone().into()) {
+                return;
+            }
+            let cb: Option<LifecycleCallback> = cb_cancel.borrow_mut().take();
             if let Some(mut cb) = cb {
+                let _ = raf_cancel.borrow_mut().take();
                 cb(crate::dom::observer::TransitionLifecycleEvent::AnimationCancel {
                     animation_name: event.animation_name(),
                 });
@@ -759,9 +773,15 @@ pub(crate) fn observe_transition_lifecycle(
         anim_cancel_handler = Some((target.clone(), on_cancel));
 
         let cb_trans_end = cb_cell.clone();
+        let raf_trans_end = raf_cell.clone();
+        let listener_target = el.clone();
         let on_trans_end = Closure::<dyn FnMut(web_sys::TransitionEvent)>::new(move |event: web_sys::TransitionEvent| {
-            let cb = cb_trans_end.borrow_mut().take();
+            if event.target().is_none_or(|target| target != listener_target.clone().into()) {
+                return;
+            }
+            let cb: Option<LifecycleCallback> = cb_trans_end.borrow_mut().take();
             if let Some(mut cb) = cb {
+                let _ = raf_trans_end.borrow_mut().take();
                 cb(crate::dom::observer::TransitionLifecycleEvent::TransitionEnd {
                     property_name: event.property_name(),
                 });
@@ -771,9 +791,15 @@ pub(crate) fn observe_transition_lifecycle(
         trans_end_handler = Some((target.clone(), on_trans_end));
 
         let cb_trans_cancel = cb_cell.clone();
+        let raf_trans_cancel = raf_cell.clone();
+        let listener_target = el.clone();
         let on_trans_cancel = Closure::<dyn FnMut(web_sys::TransitionEvent)>::new(move |event: web_sys::TransitionEvent| {
-            let cb = cb_trans_cancel.borrow_mut().take();
+            if event.target().is_none_or(|target| target != listener_target.clone().into()) {
+                return;
+            }
+            let cb: Option<LifecycleCallback> = cb_trans_cancel.borrow_mut().take();
             if let Some(mut cb) = cb {
+                let _ = raf_trans_cancel.borrow_mut().take();
                 cb(crate::dom::observer::TransitionLifecycleEvent::TransitionCancel {
                     property_name: event.property_name(),
                 });
@@ -783,23 +809,74 @@ pub(crate) fn observe_transition_lifecycle(
         trans_cancel_handler = Some((target, on_trans_cancel));
     }
 
-    let cb_timeout = cb_cell.clone();
-    let task = if fallback_timeout_ms > 0 {
-        crate::internal::safe_spawn(async move {
-            futures_timer::Delay::new(std::time::Duration::from_millis(fallback_timeout_ms)).await;
-            let cb = cb_timeout.borrow_mut().take();
-            if let Some(mut cb) = cb {
-                cb(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
+    let element_id = element_id.to_string();
+    let cb_frame = cb_cell.clone();
+    let raf_frame = raf_cell.clone();
+    let doc_frame = doc.clone();
+    let frame_guard = crate::frame::request_next_frame(move |_| {
+        let event = if doc_frame.hidden()
+            || doc_frame.visibility_state() == web_sys::VisibilityState::Hidden
+        {
+            Some(crate::dom::observer::TransitionLifecycleEvent::Hidden)
+        } else {
+            let Some(element) = doc_frame.get_element_by_id(&element_id) else {
+                let cb: Option<LifecycleCallback> = cb_frame.borrow_mut().take();
+                if let Some(mut cb) = cb {
+                    cb(crate::dom::observer::TransitionLifecycleEvent::Missing);
+                }
+                let _ = raf_frame.borrow_mut().take();
+                return;
+            };
+            let Some(window) = web_sys::window() else {
+                return;
+            };
+            let mut current = Some(element);
+            let mut hidden = false;
+            let mut active_animation = false;
+            let mut is_target = true;
+            while let Some(node) = current.take() {
+                let Ok(style) = window.get_computed_style(&node) else {
+                    return;
+                };
+                let Some(style) = style else {
+                    return;
+                };
+                if style
+                    .get_property_value("display")
+                    .is_ok_and(|value| value.trim() == "none")
+                {
+                    hidden = true;
+                    break;
+                }
+                if is_target && style_has_active_motion(&style) {
+                    active_animation = true;
+                }
+                current = node.parent_element();
+                is_target = false;
             }
-        })
-    } else {
-        None
-    };
+            if hidden {
+                Some(crate::dom::observer::TransitionLifecycleEvent::Hidden)
+            } else if active_animation {
+                None
+            } else {
+                Some(crate::dom::observer::TransitionLifecycleEvent::NoAnimation)
+            }
+        };
+        if let Some(event) = event {
+            let cb: Option<LifecycleCallback> = cb_frame.borrow_mut().take();
+            if let Some(mut cb) = cb {
+                cb(event);
+            }
+        }
+        let _ = raf_frame.borrow_mut().take();
+    })
+    .map_err(|_| crate::error::Error::Unsupported("Animation frame unavailable".into()))?;
+    raf_cell.replace(Some(frame_guard));
 
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
         "web_transition_lifecycle",
         sub_id,
-        task,
+        None,
         move || {
             if let Some((target, handler)) = anim_end_handler {
                 let _ = target.remove_event_listener_with_callback("animationend", handler.as_ref().unchecked_ref());
@@ -816,8 +893,42 @@ pub(crate) fn observe_transition_lifecycle(
             if let Ok(mut cell) = cb_cell.try_borrow_mut() {
                 cell.take();
             }
+            if let Ok(mut cell) = raf_cell.try_borrow_mut() {
+                cell.take();
+            }
         },
     ))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn style_has_active_motion(style: &web_sys::CssStyleDeclaration) -> bool {
+    fn positive_duration(value: String) -> bool {
+        value.split(',').any(|part| {
+            let part = part.trim();
+            if let Some(seconds) = part.strip_suffix("ms") {
+                seconds.trim().parse::<f64>().is_ok_and(|duration| duration > 0.0)
+            } else if let Some(seconds) = part.strip_suffix('s') {
+                seconds.trim().parse::<f64>().is_ok_and(|duration| duration > 0.0)
+            } else {
+                false
+            }
+        })
+    }
+
+    let animation_name = style
+        .get_property_value("animation-name")
+        .unwrap_or_default();
+    let transition_property = style
+        .get_property_value("transition-property")
+        .unwrap_or_default();
+    (animation_name.trim() != "none"
+        && style
+            .get_property_value("animation-duration")
+            .is_ok_and(positive_duration))
+        || (transition_property.trim() != "none"
+            && style
+                .get_property_value("transition-duration")
+                .is_ok_and(positive_duration))
 }
 
 pub(crate) fn observe_form_reset(

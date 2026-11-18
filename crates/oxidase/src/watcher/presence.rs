@@ -12,7 +12,6 @@ pub enum PresenceFallbackReason {
     Missing,
     Hidden,
     NoAnimation,
-    Timeout,
 }
 
 /// Backward-compatible alias matching `PresenceFallbackReason`.
@@ -65,7 +64,6 @@ pub type PresenceEventPayload = PresenceEvent;
 pub struct PresenceOptions {
     pub element_id: String,
     pub cycle_id: u64,
-    pub fallback_timeout_ms: u64,
 }
 
 impl PresenceOptions {
@@ -74,18 +72,11 @@ impl PresenceOptions {
         Self {
             element_id: element_id.to_string(),
             cycle_id,
-            fallback_timeout_ms: 500,
         }
-    }
-
-    /// Overrides the fallback timeout duration in milliseconds.
-    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
-        self.fallback_timeout_ms = timeout_ms;
-        self
     }
 }
 
-/// Watches an element's exit animations and unblocks unmounting when animations finish or fallback timeout fires.
+/// Watches an element's exit animations and unblocks unmounting when they finish or can no longer run.
 pub fn watch_presence(
     element_id: &str,
     cycle_id: u64,
@@ -119,13 +110,30 @@ pub fn watch_presence_with_options(
 
     let inner_guard = observe_transition_lifecycle(
         &options.element_id,
-        options.fallback_timeout_ms,
         move |event| {
             if finished {
                 return;
             }
             finished = true;
             match event {
+                TransitionLifecycleEvent::Missing => {
+                    on_event(PresenceEvent::Fallback {
+                        cycle_id,
+                        reason: PresenceFallbackReason::Missing,
+                    });
+                }
+                TransitionLifecycleEvent::Hidden => {
+                    on_event(PresenceEvent::Fallback {
+                        cycle_id,
+                        reason: PresenceFallbackReason::Hidden,
+                    });
+                }
+                TransitionLifecycleEvent::NoAnimation => {
+                    on_event(PresenceEvent::Fallback {
+                        cycle_id,
+                        reason: PresenceFallbackReason::NoAnimation,
+                    });
+                }
                 TransitionLifecycleEvent::AnimationEnd { animation_name } => {
                     on_event(PresenceEvent::AnimationEnd {
                         cycle_id,
@@ -148,12 +156,6 @@ pub fn watch_presence_with_options(
                     on_event(PresenceEvent::TransitionCancel {
                         cycle_id,
                         property_name,
-                    });
-                }
-                TransitionLifecycleEvent::TimeoutFallback => {
-                    on_event(PresenceEvent::Fallback {
-                        cycle_id,
-                        reason: PresenceFallbackReason::Timeout,
                     });
                 }
                 TransitionLifecycleEvent::Stopped => {

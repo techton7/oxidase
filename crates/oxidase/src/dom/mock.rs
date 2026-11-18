@@ -219,7 +219,6 @@ pub(crate) fn observe_capture_events(
 
 pub(crate) fn observe_transition_lifecycle(
     _element_id: &str,
-    _fallback_timeout_ms: u64,
     _callback: Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     Ok(crate::watcher_guard::WatcherGuard::new("mock_transition", 0, None))

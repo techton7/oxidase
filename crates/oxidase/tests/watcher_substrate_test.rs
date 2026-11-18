@@ -258,7 +258,7 @@ fn test_lifecycle_animation_completion_signal() {
         let received = Rc::new(RefCell::new(Vec::new()));
         let rec = received.clone();
 
-        let _guard = observe_transition_lifecycle("modal-el", 1000, move |ev| {
+        let _guard = observe_transition_lifecycle("modal-el", move |ev| {
             rec.borrow_mut().push(ev);
         })
         .expect("transition observer registration must succeed");
@@ -287,7 +287,7 @@ fn test_lifecycle_fallback_timer() {
         let received = Rc::new(RefCell::new(Vec::new()));
         let rec = received.clone();
 
-        let _guard = observe_transition_lifecycle("drawer", 50, move |ev| {
+        let _guard = observe_transition_lifecycle("drawer", move |ev| {
             rec.borrow_mut().push(ev);
         })
         .expect("transition observer registration must succeed");
@@ -297,7 +297,61 @@ fn test_lifecycle_fallback_timer() {
 
         let events = received.borrow();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0], TransitionLifecycleEvent::TimeoutFallback);
+        assert_eq!(events[0], TransitionLifecycleEvent::NoAnimation);
+    });
+}
+
+#[test]
+fn test_presence_resolves_no_animation_without_timeout() {
+    let ctx = TestContext::new();
+    let _element = ctx.add_element(ctx.root_id, "div", "still-box", 0.0, 0.0, 20.0, 20.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let captured = events.clone();
+        let _guard = watch_presence("still-box", 1, move |event| {
+            captured.borrow_mut().push(event);
+        })
+        .expect("presence observer registration must succeed");
+
+        ctx.doc.resolve(0.0);
+        assert_eq!(
+            events.borrow().as_slice(),
+            [PresenceEvent::Fallback {
+                cycle_id: 1,
+                reason: PresenceFallbackReason::NoAnimation,
+            }]
+        );
+    });
+}
+
+#[test]
+fn test_presence_resolves_hidden_ancestor_without_timeout() {
+    let ctx = TestContext::new();
+    let hidden = ctx.add_element(ctx.root_id, "div", "hidden-parent", 0.0, 0.0, 20.0, 20.0);
+    let _child = ctx.add_element(hidden, "div", "hidden-child", 0.0, 0.0, 20.0, 20.0);
+    ctx.base
+        .borrow_mut()
+        .add_user_agent_stylesheet(UserAgentStylesheet::parse(
+            "#hidden-parent { display: none; }",
+        ));
+
+    Document::with_current(ctx.doc.clone(), || {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let captured = events.clone();
+        let _guard = watch_presence("hidden-child", 2, move |event| {
+            captured.borrow_mut().push(event);
+        })
+        .expect("presence observer registration must succeed");
+
+        ctx.doc.resolve(0.0);
+        assert_eq!(
+            events.borrow().as_slice(),
+            [PresenceEvent::Fallback {
+                cycle_id: 2,
+                reason: PresenceFallbackReason::Hidden,
+            }]
+        );
     });
 }
 
@@ -836,7 +890,7 @@ fn test_live_blitz_animation_completion_dispatch() {
             to { opacity: 0; }
         }
         #modal-box {
-            animation: fade-out 0.1s;
+            animation: fade-out 0.75s;
         }
     "#));
 
@@ -856,10 +910,18 @@ fn test_live_blitz_animation_completion_dispatch() {
             "Animation should be running at t=0.0 and not yet emit completion"
         );
 
-        // 2. Advance time past the 0.1s animation duration to t=0.2:
+        assert!(
+            {
+                ctx.doc.resolve(0.5);
+                presence_events.borrow().is_empty()
+            },
+            "Presence must remain retained after the former 500ms fallback horizon"
+        );
+
+        // 2. Advance time past the 0.75s animation duration to t=0.8:
         // Stylo detects animation.has_ended(now), transitions to Finished,
         // and emits the live animationend signal to the presence watcher
-        ctx.doc.resolve(0.2);
+        ctx.doc.resolve(0.8);
 
         let events = presence_events.borrow();
         assert_eq!(
@@ -1087,7 +1149,7 @@ fn test_transition_lifecycle_strict_one_shot_semantics() {
         let invocations = Rc::new(RefCell::new(Vec::new()));
         let inv = invocations.clone();
 
-        let _guard = observe_transition_lifecycle("dialog-box", 50, move |ev| {
+        let _guard = observe_transition_lifecycle("dialog-box", move |ev| {
             inv.borrow_mut().push(ev);
         })
         .expect("registration must succeed");
@@ -1226,7 +1288,7 @@ fn test_transition_lifecycle_guard_drop_inside_callback_no_panic() {
         let callback_executed = Rc::new(RefCell::new(false));
         let cb_flag = callback_executed.clone();
 
-        let guard = observe_transition_lifecycle("trans-dialog", 500, move |_ev| {
+        let guard = observe_transition_lifecycle("trans-dialog", move |_ev| {
             // Drop the WatcherGuard from inside the callback
             let dropped_guard = guard_cell_clone.borrow_mut().take();
             assert!(dropped_guard.is_some(), "Guard must be present before dropping");

@@ -806,6 +806,7 @@ impl Document {
             let prev_len = base.borrow().pending_animation_events.len();
             base.borrow_mut().resolve(current_time_for_animations);
             self.sync_animation_observers(prev_len);
+            self.finish_resolved_transition_observers();
             self.last_synced_len.set(base.borrow().pending_animation_events.len());
             self.notify_layout_observers();
         }
@@ -867,6 +868,7 @@ impl Document {
     /// Synchronizes all native animation completion and cancellation events from Blitz's pending queue.
     pub fn sync_animation_observers_all(&self) {
         self.sync_animation_observers(0);
+        self.finish_resolved_transition_observers();
         if let Some(base) = self.get_base() {
             self.last_synced_len.set(base.borrow().pending_animation_events.len());
         }
@@ -888,7 +890,67 @@ impl Document {
             self.sync_animation_observers(start_idx);
             self.last_synced_len.set(cur_len);
         }
+        self.finish_resolved_transition_observers();
         self.notify_layout_observers();
+    }
+
+    fn finish_resolved_transition_observers(&self) {
+        let Some(base) = self.get_base() else {
+            return;
+        };
+        let fallback = if self.is_document_hidden() {
+            Some(crate::dom::observer::TransitionLifecycleEvent::Hidden)
+        } else {
+            let Ok(base) = base.try_borrow() else {
+                return;
+            };
+            let targets = CURRENT_OBSERVERS.with(|cell| {
+                let Ok(reg) = cell.try_borrow() else {
+                    return Vec::new();
+                };
+                reg.transition_observers
+                    .values()
+                    .map(|entry| entry.target_id.clone())
+                    .collect::<Vec<_>>()
+            });
+            let mut events = Vec::new();
+            for target_id in targets {
+                let event = match base.get_element_by_id(&target_id) {
+                    None => Some(crate::dom::observer::TransitionLifecycleEvent::Missing),
+                    Some(node_id) => {
+                        match base.node_or_ancestor_has_display_none(node_id) {
+                            Some(true) => {
+                                Some(crate::dom::observer::TransitionLifecycleEvent::Hidden)
+                            }
+                            Some(false)
+                                if !base.node_has_active_animations(node_id)
+                                    && !base.node_has_active_transitions(node_id) =>
+                            {
+                                Some(crate::dom::observer::TransitionLifecycleEvent::NoAnimation)
+                            }
+                            Some(false) | None => None,
+                        }
+                    }
+                };
+                if let Some(event) = event {
+                    events.push((target_id, event));
+                }
+            }
+            drop(base);
+            for (target_id, event) in events {
+                let observers = take_transition_observers(&target_id);
+                for mut observer in observers {
+                    (observer.callback)(event.clone());
+                }
+            }
+            return;
+        };
+        if let Some(event) = fallback {
+            let observers = take_all_transition_observers();
+            for mut observer in observers {
+                (observer.callback)(event.clone());
+            }
+        }
     }
 
     /// Evaluates all registered resize observers and fires callbacks for elements whose layout changed.
@@ -1045,11 +1107,11 @@ impl Document {
         }
     }
 
-    /// Dispatches a timeout fallback signal to registered transition observers.
+    /// Dispatches a resolved no-animation fallback signal to transition observers.
     pub fn dispatch_transition_fallback(&self, element_id: &str) {
         let observers = take_transition_observers(element_id);
         for mut obs in observers {
-            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
+            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::NoAnimation);
         }
     }
 
@@ -1559,6 +1621,17 @@ fn take_transition_observers(element_id: &str) -> Vec<TransitionObserverEntry> {
     })
 }
 
+fn take_all_transition_observers() -> Vec<TransitionObserverEntry> {
+    CURRENT_OBSERVERS.with(|cell| {
+        let Ok(mut reg) = cell.try_borrow_mut() else {
+            return Vec::new();
+        };
+        std::mem::take(&mut reg.transition_observers)
+            .into_values()
+            .collect()
+    })
+}
+
 pub(crate) fn observe_element_resize(
     element_id: &str,
     callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>,
@@ -1622,7 +1695,6 @@ pub(crate) fn observe_capture_events(
 
 pub(crate) fn observe_transition_lifecycle(
     element_id: &str,
-    fallback_timeout_ms: u64,
     callback: Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     let sub_id = crate::internal::next_subscription_id();
@@ -1636,28 +1708,10 @@ pub(crate) fn observe_transition_lifecycle(
         );
     });
 
-    let task = if fallback_timeout_ms > 0 {
-        crate::internal::safe_spawn(async move {
-            futures_timer::Delay::new(std::time::Duration::from_millis(fallback_timeout_ms)).await;
-            let entry = CURRENT_OBSERVERS.with(|cell| {
-                if let Ok(mut reg) = cell.try_borrow_mut() {
-                    reg.transition_observers.remove(&sub_id)
-                } else {
-                    None
-                }
-            });
-            if let Some(mut obs) = entry {
-                (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TimeoutFallback);
-            }
-        })
-    } else {
-        None
-    };
-
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
         "native_transition_lifecycle",
         sub_id,
-        task,
+        None,
         move || {
             CURRENT_OBSERVERS.with(|cell| {
                 if let Ok(mut reg) = cell.try_borrow_mut() {

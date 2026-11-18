@@ -173,7 +173,7 @@ mod tests {
 
         let events_log = Rc::new(RefCell::new(Vec::new()));
         let el_clone = events_log.clone();
-        let _guard = observe_transition_lifecycle("anim-box", 0, move |ev| {
+        let _guard = observe_transition_lifecycle("anim-box", move |ev| {
             el_clone.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");
@@ -204,7 +204,7 @@ mod tests {
 
         // Re-register observer for subsequent event (transition observers are one-shot)
         let el_clone2 = events_log.clone();
-        let _guard2 = observe_transition_lifecycle("anim-box", 0, move |ev| {
+        let _guard2 = observe_transition_lifecycle("anim-box", move |ev| {
             el_clone2.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");
@@ -280,7 +280,7 @@ mod tests {
 
         let events_log = Rc::new(RefCell::new(Vec::new()));
         let el_clone = events_log.clone();
-        let _guard = observe_transition_lifecycle("trans-box", 0, move |ev| {
+        let _guard = observe_transition_lifecycle("trans-box", move |ev| {
             el_clone.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");
@@ -311,7 +311,7 @@ mod tests {
 
         // Re-register observer for subsequent event (transition observers are one-shot)
         let el_clone2 = events_log.clone();
-        let _guard2 = observe_transition_lifecycle("trans-box", 0, move |ev| {
+        let _guard2 = observe_transition_lifecycle("trans-box", move |ev| {
             el_clone2.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");
@@ -389,7 +389,7 @@ mod tests {
         let rc_clone = reentrancy_called.clone();
         let doc_clone = native_doc.clone();
 
-        let _guard = observe_transition_lifecycle("borrow-box", 0, move |_| {
+        let _guard = observe_transition_lifecycle("borrow-box", move |_| {
             // Re-entrant mutable borrow on base document inside observer callback
             doc_clone.resolve(0.0);
             *rc_clone.borrow_mut() = true;
@@ -449,7 +449,7 @@ mod tests {
 
         let events_log = Rc::new(RefCell::new(Vec::new()));
         let el_clone = events_log.clone();
-        let _guard = observe_transition_lifecycle("box-all", 0, move |ev| {
+        let _guard = observe_transition_lifecycle("box-all", move |ev| {
             el_clone.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");
@@ -536,7 +536,7 @@ mod tests {
 
         let events_log = Rc::new(RefCell::new(Vec::new()));
         let el_clone = events_log.clone();
-        let _guard = observe_transition_lifecycle("pump-box", 0, move |ev| {
+        let _guard = observe_transition_lifecycle("pump-box", move |ev| {
             el_clone.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");
@@ -569,7 +569,7 @@ mod tests {
 
         // Re-register observer for second event
         let el_clone2 = events_log.clone();
-        let _guard2 = observe_transition_lifecycle("pump-box", 0, move |ev| {
+        let _guard2 = observe_transition_lifecycle("pump-box", move |ev| {
             el_clone2.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");
@@ -609,7 +609,7 @@ mod tests {
 
         // Re-register observer for third event after drain
         let el_clone3 = events_log.clone();
-        let _guard3 = observe_transition_lifecycle("pump-box", 0, move |ev| {
+        let _guard3 = observe_transition_lifecycle("pump-box", move |ev| {
             el_clone3.borrow_mut().push(ev);
         })
         .expect("observe_transition_lifecycle must succeed");

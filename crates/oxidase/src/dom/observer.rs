@@ -3,7 +3,7 @@
 //! Provides Web-compatible observer surfaces for:
 //! 1. Element resize observation (ResizeObserver equivalent)
 //! 2. Capture-phase interaction listening (PointerDown, FocusIn, KeyDown with node path resolution)
-//! 3. Transition and animation lifecycle with guaranteed fallback timeouts
+//! 3. Transition and animation lifecycle with resolved-state fallbacks
 //! 4. Form reset observation on enclosing forms
 
 use crate::error::{HostError, Result};
@@ -109,11 +109,13 @@ impl CaptureEvent {
 /// Lifecycle events for CSS animations and transitions during element presence phases.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransitionLifecycleEvent {
+    Missing,
+    Hidden,
+    NoAnimation,
     AnimationEnd { animation_name: String },
     AnimationCancel { animation_name: String },
     TransitionEnd { property_name: String },
     TransitionCancel { property_name: String },
-    TimeoutFallback,
     Stopped,
 }
 
@@ -132,13 +134,12 @@ pub fn observe_capture_events(
     crate::dom::backend::observe_capture_events(Box::new(callback))
 }
 
-/// Observes transition and animation lifecycle for an element with a guaranteed fallback timeout.
+/// Observes transition and animation lifecycle for an element, including resolved-state fallbacks.
 pub fn observe_transition_lifecycle(
     element_id: &str,
-    fallback_timeout_ms: u64,
     callback: impl FnMut(TransitionLifecycleEvent) + 'static,
 ) -> Result<WatcherGuard> {
-    crate::dom::backend::observe_transition_lifecycle(element_id, fallback_timeout_ms, Box::new(callback))
+    crate::dom::backend::observe_transition_lifecycle(element_id, Box::new(callback))
 }
 
 /// Observes reset events dispatched on an element's enclosing form.
