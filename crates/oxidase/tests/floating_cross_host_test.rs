@@ -1,5 +1,3 @@
-#![cfg(feature = "native")]
-
 use blitz_dom::{Attribute, BaseDocument, DocumentConfig, NodeId, QualName, local_name, ns};
 use oxidase::prelude::*;
 use oxidase_floating_ui::compute_position;

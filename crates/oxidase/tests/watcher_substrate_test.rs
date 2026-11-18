@@ -1,5 +1,3 @@
-#![cfg(feature = "native")]
-
 use blitz_traits::events::{
     BlitzKeyEvent, BlitzPointerEvent, BlitzPointerId, KeyState, MouseEventButton,
     MouseEventButtons, PointerCoords, PointerDetails, UiEvent,

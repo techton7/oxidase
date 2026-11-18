@@ -1,5 +1,3 @@
-#![cfg(feature = "native")]
-
 use blitz_dom::{BaseDocument, DocumentConfig};
 use dioxus::prelude::*;
 use oxidase::dom::Document;

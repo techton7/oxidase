@@ -7,6 +7,11 @@ repository.workspace = true
 authors.workspace = true
 description = "High-performance browser FFI runtime engine for Dioxus"
 readme = "../../README.md"
+autotests = false
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
 
 [dependencies]
 oxidase-macro = { path = "../oxidase-macro", version = "0.4.1" }

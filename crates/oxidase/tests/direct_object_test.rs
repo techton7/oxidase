@@ -1,5 +1,3 @@
-#![cfg(feature = "native")]
-
 use blitz_dom::{Attribute, BaseDocument, DocumentConfig, QualName, local_name, ns};
 use oxidase::prelude::*;
 use oxidase::Element;
