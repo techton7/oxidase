@@ -32,28 +32,47 @@ fn create_test_blitz_document() -> (Document, blitz_dom::NodeId) {
         vp.window_size = (1920, 1080);
         vp.hidpi_scale = 2.0; // logical 960x540
     }
-    base_doc.set_viewport_scroll(blitz_dom::Point { x: 10.0, y: 20.0 });
 
-    let root_id = base_doc.root_node().id;
+    let doc_root = base_doc.root_node().id;
     let btn_id = {
         let mut mutator = base_doc.mutate();
-        let node_id = mutator.create_element(
-            QualName::new(None, ns!(), local_name!("button")),
+        let html_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("html")),
             vec![Attribute {
-                name: QualName::new(None, ns!(), local_name!("id")),
-                value: "btn-action".into(),
+                name: QualName::new(None, ns!(), local_name!("style")),
+                value: "display: block; position: relative; width: 2000px; height: 2000px; margin: 0; padding: 0;".into(),
             }],
         );
-        mutator.append_children(root_id, &[node_id]);
-        node_id
+        let btn_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("button")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "btn-action".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "display: block; position: absolute; left: 100px; top: 200px; width: 150px; height: 40px; margin: 0; padding: 0; border: 0; box-sizing: border-box; overflow: auto;".into(),
+                },
+            ],
+        );
+        // Real scrollable overflow inside the button (300x200 content in a 150x40 box).
+        let content_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![Attribute {
+                name: QualName::new(None, ns!(), local_name!("style")),
+                value: "display: block; width: 300px; height: 200px;".into(),
+            }],
+        );
+        mutator.append_children(btn_id, &[content_id]);
+        mutator.append_children(html_id, &[btn_id]);
+        mutator.append_children(doc_root, &[html_id]);
+        btn_id
     };
 
-    let btn_node = base_doc.get_node_mut(btn_id).unwrap();
-    let layout = &mut btn_node.layout_data_mut().final_layout;
-    layout.location.x = 100.0;
-    layout.location.y = 200.0;
-    layout.size.width = 150.0;
-    layout.size.height = 40.0;
+    // Resolve layout first so the initial viewport scroll is not reset by layout.
+    base_doc.resolve(0.0);
+    base_doc.set_viewport_scroll(blitz_dom::Point { x: 10.0, y: 20.0 });
 
     let doc = Document::from_base(Rc::new(RefCell::new(base_doc)));
     (doc, btn_id)

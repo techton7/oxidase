@@ -785,17 +785,13 @@ impl Element {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
                 let nid = *node_id;
-                {
-                    let mut base = doc.borrow_mut();
-                    let Some(node) = base.get_node_mut(nid) else {
-                        return Err(HostError::ElementNotFound(format!("NodeId: {:?}", nid)));
-                    };
-                    let offset = node.scroll_offset_mut();
-                    offset.x = x;
-                    offset.y = y;
+                let mut base = doc.borrow_mut();
+                if base.get_node(nid).is_none() {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", nid)));
                 }
-                let native_doc = crate::dom::Document::from_base(doc.clone());
-                native_doc.dispatch_element_scroll_by_node_id(nid);
+                // The engine queues the resulting `scroll` event; it is dispatched through the
+                // capture hook when the host drains pending events (e.g. `DioxusDocument::poll`).
+                base.scroll_to(nid, x, y, blitz_dom::ScrollBehavior::Instant);
                 Ok(())
             }
             #[cfg(target_arch = "wasm32")]

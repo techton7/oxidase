@@ -122,6 +122,19 @@ impl TestContext {
                     },
                 ],
             );
+            // In-flow spacer so the container has real scrollable overflow (500px per axis).
+            let spacer = mutator.create_element(
+                QualName::new(None, ns!(), local_name!("div")),
+                vec![Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: format!(
+                        "display: block; width: {}px; height: {}px;",
+                        w + 500.0,
+                        h + 500.0
+                    ),
+                }],
+            );
+            mutator.append_children(nid, &[spacer]);
             mutator.append_children(parent_id, &[nid]);
             nid
         };
@@ -135,6 +148,13 @@ impl TestContext {
         }
         node_id
     }
+}
+
+/// Drains the engine's pending DOM event queue (queued `scroll` events etc.) through the capture hook,
+/// as `DioxusDocument::poll()` does in a live host.
+fn flush_pending_events(ctx: &TestContext) {
+    let mut base = ctx.base.borrow_mut();
+    blitz_dom::EventDriver::new(&mut *base, blitz_dom::NoopEventHandler).flush_pending_events();
 }
 
 fn block_on<F: std::future::Future>(mut fut: F) -> F::Output {
@@ -202,6 +222,7 @@ fn test_multi_ancestor_nested_scroll_recomputation() {
         // Step 3: Mutate inner container scroll
         let inner_el = ctx.doc.element_by_id("inner-scroll").expect("inner-scroll must exist");
         block_on(inner_el.scroll_to(0.0, 25.0)).expect("scroll_to inner must succeed");
+        flush_pending_events(&ctx);
         oxidase::frame::tick(Duration::from_millis(16));
 
         assert_eq!(
@@ -230,6 +251,7 @@ fn test_multi_ancestor_nested_scroll_recomputation() {
 
         let outer_el = ctx.doc.element_by_id("outer-scroll").expect("outer-scroll must exist");
         block_on(outer_el.scroll_to(10.0, 35.0)).expect("scroll_to outer must succeed");
+        flush_pending_events(&ctx);
         oxidase::frame::tick(Duration::from_millis(16));
 
         assert_eq!(
@@ -301,7 +323,9 @@ fn test_coalesced_nested_scroll_update() {
 
         // Mutate BOTH inner and outer containers rapidly without sleeping (< 16ms window)
         block_on(inner_el.scroll_to(0.0, 30.0)).expect("inner scroll");
+        flush_pending_events(&ctx);
         block_on(outer_el.scroll_to(15.0, 40.0)).expect("outer scroll");
+        flush_pending_events(&ctx);
         oxidase::frame::tick(Duration::from_millis(16));
 
         // Assert exactly 1 coalesced event is emitted
@@ -377,6 +401,7 @@ fn test_raii_teardown_and_leak_proof_registry_verification() {
             // Active behavioral verification
             let inner_el = ctx.doc.element_by_id("leak-inner").expect("leak-inner exists");
             block_on(inner_el.scroll_to(0.0, 10.0)).expect("scroll inner");
+            flush_pending_events(&ctx);
             oxidase::frame::tick(Duration::from_millis(16));
             assert_eq!(events.borrow().len(), 1, "Active watcher must receive event");
         } // <--- _guard drops here!
@@ -407,7 +432,9 @@ fn test_raii_teardown_and_leak_proof_registry_verification() {
         let outer_el = ctx.doc.element_by_id("leak-outer").expect("leak-outer exists");
 
         block_on(inner_el.scroll_to(0.0, 50.0)).expect("scroll inner after drop");
+        flush_pending_events(&ctx);
         block_on(outer_el.scroll_to(0.0, 50.0)).expect("scroll outer after drop");
+        flush_pending_events(&ctx);
         oxidase::frame::tick(Duration::from_millis(16));
 
         assert_eq!(
@@ -456,6 +483,7 @@ fn test_explicit_guard_stop_teardown() {
         std::thread::sleep(Duration::from_millis(20));
         let inner_el = ctx.doc.element_by_id("stop-inner").expect("stop-inner exists");
         block_on(inner_el.scroll_to(0.0, 40.0)).expect("scroll inner after stop");
+        flush_pending_events(&ctx);
 
         assert_eq!(
             *events.borrow(),

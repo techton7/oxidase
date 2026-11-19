@@ -39,7 +39,7 @@ impl TestContext {
                     },
                     Attribute {
                         name: QualName::new(None, ns!(), local_name!("style")),
-                        value: "width: 1920px; height: 1080px; margin: 0; position: relative;".into(),
+                        value: "width: 1920px; height: 1080px; margin: 0; position: relative; display: block;".into(),
                     },
                 ],
             );
@@ -134,12 +134,25 @@ impl TestContext {
                     Attribute {
                         name: QualName::new(None, ns!(), local_name!("style")),
                         value: format!(
-                            "position: absolute; left: {}px; top: {}px; width: {}px; height: {}px; overflow: scroll;",
+                            "position: absolute; left: {}px; top: {}px; width: {}px; height: {}px; overflow: scroll; display: block;",
                             x, y, w, h
                         ),
                     },
                 ],
             );
+            // In-flow spacer so the container has real scrollable overflow (500px per axis).
+            let spacer = mutator.create_element(
+                QualName::new(None, ns!(), local_name!("div")),
+                vec![Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: format!(
+                        "display: block; width: {}px; height: {}px;",
+                        w + 500.0,
+                        h + 500.0
+                    ),
+                }],
+            );
+            mutator.append_children(nid, &[spacer]);
             mutator.append_children(parent_id, &[nid]);
             nid
         };
@@ -153,6 +166,13 @@ impl TestContext {
         }
         node_id
     }
+}
+
+/// Drains the engine's pending DOM event queue (queued `scroll` events etc.) through the capture hook,
+/// as `DioxusDocument::poll()` does in a live host.
+fn flush_pending_events(ctx: &TestContext) {
+    let mut base = ctx.base.borrow_mut();
+    blitz_dom::EventDriver::new(&mut *base, blitz_dom::NoopEventHandler).flush_pending_events();
 }
 
 fn block_on<F: std::future::Future>(mut fut: F) -> F::Output {
@@ -1023,6 +1043,7 @@ fn test_watch_floating_auto_update_nested_ancestor_scroll() {
         // Scroll the ancestor element container
         let container_el = ctx.doc.element_by_id("scroll-box").expect("scroll-box element must exist");
         block_on(container_el.scroll_to(0.0, 50.0)).expect("element scroll_to must succeed");
+        flush_pending_events(&ctx);
         oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         let events = updates.borrow();
@@ -1053,6 +1074,7 @@ fn test_watch_floating_auto_update_ancestor_deduplication() {
         // Scroll the shared ancestor container once
         let container_el = ctx.doc.element_by_id("shared-ancestor").expect("shared-ancestor must exist");
         block_on(container_el.scroll_to(0.0, 30.0)).expect("element scroll_to must succeed");
+        flush_pending_events(&ctx);
         oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         let events = updates.borrow();
@@ -1121,6 +1143,7 @@ fn test_watch_floating_auto_update_guard_cleanup() {
 
             let container_el = ctx.doc.element_by_id("clean-scroll").expect("clean-scroll must exist");
             block_on(container_el.scroll_to(0.0, 20.0)).expect("scroll_to must succeed");
+            flush_pending_events(&ctx);
             oxidase::frame::tick(std::time::Duration::from_millis(16));
             assert_eq!(*counter.borrow(), 1, "Active watcher must receive scroll event");
         } // _guard drops here and cleans up all inner scroll & resize listeners
@@ -1129,6 +1152,7 @@ fn test_watch_floating_auto_update_guard_cleanup() {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let container_el = ctx.doc.element_by_id("clean-scroll").expect("clean-scroll must exist");
         block_on(container_el.scroll_to(0.0, 80.0)).expect("scroll_to must succeed");
+        flush_pending_events(&ctx);
         oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         assert_eq!(
@@ -1908,3 +1932,270 @@ fn test_watch_floating_auto_update_native_post_mount_early_guard_drop() {
 }
 
 
+
+// 30. Capture-hook lifetime: programmatic element scroll and transient Document handles
+struct CaptureHookProbes {
+    dismiss: Rc<RefCell<Vec<DismissEvent>>>,
+    capture: Rc<RefCell<Vec<CaptureEventKind>>>,
+    scroll: Rc<std::cell::Cell<usize>>,
+    element_scroll: Rc<std::cell::Cell<usize>>,
+    _guards: Vec<Box<dyn std::any::Any>>,
+}
+
+fn install_capture_hook_probes() -> CaptureHookProbes {
+    let dismiss = Rc::new(RefCell::new(Vec::new()));
+    let capture = Rc::new(RefCell::new(Vec::new()));
+    let scroll = Rc::new(std::cell::Cell::new(0usize));
+    let element_scroll = Rc::new(std::cell::Cell::new(0usize));
+
+    let d = dismiss.clone();
+    let dismiss_guard = watch_document_dismiss(&["scroll-box"], move |ev| {
+        d.borrow_mut().push(ev);
+    })
+    .expect("watch_document_dismiss must succeed");
+
+    let c = capture.clone();
+    let capture_guard = observe_capture_events(move |ev| {
+        c.borrow_mut().push(ev.kind.clone());
+    })
+    .expect("observe_capture_events must succeed");
+
+    let s = scroll.clone();
+    let scroll_guard = observe_scroll(move || s.set(s.get() + 1)).expect("observe_scroll must succeed");
+
+    let es = element_scroll.clone();
+    let element_scroll_guard = observe_element_scroll("scroll-box", move || es.set(es.get() + 1))
+        .expect("observe_element_scroll must succeed");
+
+    CaptureHookProbes {
+        dismiss,
+        capture,
+        scroll,
+        element_scroll,
+        _guards: vec![
+            Box::new(dismiss_guard),
+            Box::new(capture_guard),
+            Box::new(scroll_guard),
+            Box::new(element_scroll_guard),
+        ],
+    }
+}
+
+/// Builds a real `overflow-y: auto` container (100px tall) holding a 400px tall child,
+/// plus an element outside the container. Layout is resolved by the engine.
+fn build_scroll_fixture(ctx: &TestContext) -> blitz_dom::NodeId {
+    let mut base = ctx.base.borrow_mut();
+    let scroll_id = {
+        let mut mutator = base.mutate();
+        let scroll_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "scroll-box".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "display: block; position: absolute; left: 0px; top: 0px; width: 200px; height: 100px; overflow-y: auto;".into(),
+                },
+            ],
+        );
+        let inner_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "scroll-inner".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "display: block; width: 100px; height: 400px;".into(),
+                },
+            ],
+        );
+        let outside_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "outside-box".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "display: block; position: absolute; left: 400px; top: 400px; width: 80px; height: 30px;".into(),
+                },
+            ],
+        );
+        mutator.append_children(scroll_id, &[inner_id]);
+        mutator.append_children(ctx.root_id, &[scroll_id, outside_id]);
+        scroll_id
+    };
+    drop(base);
+    ctx.doc.resolve(0.0);
+    scroll_id
+}
+
+fn capture_hook_test_pointer(x: f32, y: f32) -> BlitzPointerEvent {
+    BlitzPointerEvent {
+        id: BlitzPointerId::Mouse,
+        is_primary: true,
+        coords: PointerCoords {
+            page_x: x,
+            page_y: y,
+            client_x: x,
+            client_y: y,
+            screen_x: x,
+            screen_y: y,
+        },
+        button: MouseEventButton::Main,
+        buttons: MouseEventButtons::Primary,
+        mods: Modifiers::empty(),
+        details: PointerDetails::default(),
+        element: Default::default(),
+        active_pointers: Default::default(),
+    }
+}
+
+fn capture_hook_test_escape() -> BlitzKeyEvent {
+    BlitzKeyEvent {
+        key: Key::Named(NamedKey::Escape),
+        code: Code::Escape,
+        modifiers: Modifiers::empty(),
+        location: Location::Standard,
+        is_auto_repeating: false,
+        is_composing: false,
+        state: KeyState::Pressed,
+        text: None,
+    }
+}
+
+fn capture_hook_test_wheel(x: f32, y: f32, dy: f64) -> blitz_traits::events::BlitzWheelEvent {
+    blitz_traits::events::BlitzWheelEvent {
+        delta: blitz_traits::events::BlitzWheelDelta::Pixels(0.0, dy),
+        phase: blitz_traits::events::BlitzWheelPhase::Moved,
+        source: blitz_traits::events::BlitzWheelSource::Wheel,
+        coords: PointerCoords {
+            page_x: x,
+            page_y: y,
+            client_x: x,
+            client_y: y,
+            screen_x: x,
+            screen_y: y,
+        },
+        buttons: MouseEventButtons::empty(),
+        mods: Modifiers::empty(),
+        element: Default::default(),
+    }
+}
+
+/// Drives PointerDown (outside), Escape KeyDown, then PointerMove + Wheel (inside the scroll box)
+/// through the live Blitz event driver and asserts every observer still fires.
+fn assert_capture_hook_alive(ctx: &TestContext, probes: &CaptureHookProbes) {
+    let dismiss_before = probes.dismiss.borrow().len();
+    let capture_before = probes.capture.borrow().len();
+
+    ctx.doc
+        .handle_ui_event(UiEvent::PointerDown(capture_hook_test_pointer(420.0, 410.0)));
+    assert_eq!(
+        probes.dismiss.borrow().len(),
+        dismiss_before + 1,
+        "PointerDown outside boundary must reach dismiss watcher"
+    );
+    assert!(matches!(
+        probes.dismiss.borrow().last(),
+        Some(DismissEvent::PointerDown { .. })
+    ));
+
+    ctx.doc
+        .handle_ui_event(UiEvent::KeyDown(capture_hook_test_escape()));
+    assert_eq!(
+        probes.dismiss.borrow().len(),
+        dismiss_before + 2,
+        "Escape KeyDown must reach dismiss watcher"
+    );
+    assert_eq!(probes.dismiss.borrow().last(), Some(&DismissEvent::Escape));
+    assert!(
+        probes.capture.borrow().len() >= capture_before + 2,
+        "capture observer must see PointerDown and KeyDown"
+    );
+
+    let scroll_before = probes.scroll.get();
+    let element_scroll_before = probes.element_scroll.get();
+    let offset_before = block_on(ctx.doc.element_by_id("scroll-box").unwrap().scroll_y())
+        .expect("scroll_y must succeed");
+
+    ctx.doc
+        .handle_ui_event(UiEvent::PointerMove(capture_hook_test_pointer(50.0, 50.0)));
+    ctx.doc.handle_ui_event(UiEvent::Wheel(capture_hook_test_wheel(50.0, 50.0, -20.0)));
+
+    let offset_after = block_on(ctx.doc.element_by_id("scroll-box").unwrap().scroll_y())
+        .expect("scroll_y must succeed");
+    assert!(
+        offset_after > offset_before,
+        "Wheel over scroll box must advance scroll offset ({offset_before} -> {offset_after})"
+    );
+    assert!(
+        probes.scroll.get() > scroll_before,
+        "observe_scroll must fire for engine wheel scroll"
+    );
+    assert!(
+        probes.element_scroll.get() > element_scroll_before,
+        "observe_element_scroll must fire for engine wheel scroll"
+    );
+}
+
+#[test]
+fn test_scroll_to_preserves_capture_hook_for_dismiss_and_scroll_observers() {
+    let ctx = TestContext::new();
+    build_scroll_fixture(&ctx);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let probes = install_capture_hook_probes();
+
+        let el = ctx.doc.element_by_id("scroll-box").expect("scroll-box element must exist");
+        let element_scroll_before = probes.element_scroll.get();
+
+        block_on(el.scroll_to(0.0, 40.0)).expect("element scroll_to must succeed");
+        flush_pending_events(&ctx);
+
+        let y = block_on(el.scroll_y()).expect("scroll_y must succeed");
+        assert_eq!(y, 40.0, "scroll_to must move the container to the requested offset");
+        assert!(
+            probes.element_scroll.get() > element_scroll_before,
+            "scroll_to must notify element scroll observers"
+        );
+
+        // scroll_to must not have replaced or removed the engine capture hook.
+        assert!(
+            ctx.base.borrow().capture_hook().is_some(),
+            "capture hook must remain installed after scroll_to"
+        );
+        assert_capture_hook_alive(&ctx, &probes);
+    });
+}
+
+#[test]
+fn test_temporary_document_from_base_drop_does_not_kill_capture_hook() {
+    let ctx = TestContext::new();
+    build_scroll_fixture(&ctx);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let probes = install_capture_hook_probes();
+
+        // Construct and immediately drop additional handles for the already-bridged BaseDocument.
+        for _ in 0..3 {
+            let temp = Document::from_base(ctx.base.clone());
+            drop(temp);
+        }
+
+        assert!(
+            ctx.base.borrow().capture_hook().is_some(),
+            "capture hook must survive transient Document handles"
+        );
+        assert_capture_hook_alive(&ctx, &probes);
+
+        // A second round of transient handles after events have flowed must not reset state either.
+        drop(Document::from_base(ctx.base.clone()));
+        assert_capture_hook_alive(&ctx, &probes);
+    });
+}

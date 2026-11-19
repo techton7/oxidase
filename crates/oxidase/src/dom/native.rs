@@ -111,7 +111,6 @@ impl Document {
     }
 
     /// Internal constructor without re-attaching engine bridges.
-    #[allow(dead_code)]
     pub(crate) fn from_base_raw(inner: Rc<RefCell<BaseDocument>>) -> Self {
         Self {
             inner: Rc::new(RefCell::new(Some(inner))),
@@ -140,16 +139,16 @@ impl Document {
             armed_label_click: bool,
         }
 
+        if base.borrow().capture_hook().is_some() {
+            return;
+        }
+
         let click_state = RefCell::new(NativeBridgeClickState::default());
-        let weak_inner = Rc::downgrade(&self.inner);
+        let weak_base = Rc::downgrade(&base);
         base.borrow_mut().set_capture_hook(Some(Rc::new(move |base_doc, event, chain| {
             if matches!(&event.data, DomEventData::Load | DomEventData::Error) {
-                if let Some(inner) = weak_inner.upgrade() {
-                    let doc = Document {
-                        inner,
-                        authoritative: Rc::new(Cell::new(true)),
-                        last_synced_len: Rc::new(Cell::new(0)),
-                    };
+                if let Some(base_rc) = weak_base.upgrade() {
+                    let doc = Document::from_base_raw(base_rc);
                     doc.dispatch_image_status(
                         event.target,
                         if matches!(&event.data, DomEventData::Load) {
@@ -163,12 +162,8 @@ impl Document {
             }
 
             if let DomEventData::Scroll(_) = &event.data {
-                if let Some(inner) = weak_inner.upgrade() {
-                    let doc = Document {
-                        inner,
-                        authoritative: Rc::new(Cell::new(true)),
-                        last_synced_len: Rc::new(Cell::new(0)),
-                    };
+                if let Some(base_rc) = weak_base.upgrade() {
+                    let doc = Document::from_base_raw(base_rc);
                     if let Some(node) = base_doc.get_node(event.target)
                         && let Some(el) = node.element_data()
                         && let Some(id) = &el.id
@@ -181,12 +176,8 @@ impl Document {
             }
 
             if let DomEventData::PointerMove(pe) = &event.data {
-                if let Some(inner) = weak_inner.upgrade() {
-                    let doc = Document {
-                        inner,
-                        authoritative: Rc::new(Cell::new(true)),
-                        last_synced_len: Rc::new(Cell::new(0)),
-                    };
+                if let Some(base_rc) = weak_base.upgrade() {
+                    let doc = Document::from_base_raw(base_rc);
                     doc.dispatch_pointer_move(pe.client_x() as f64, pe.client_y() as f64);
                 }
                 return;
@@ -321,12 +312,8 @@ impl Document {
                 }
             }
 
-            if let Some(inner) = weak_inner.upgrade() {
-                let doc = Document {
-                    inner,
-                    authoritative: Rc::new(Cell::new(true)),
-                    last_synced_len: Rc::new(Cell::new(0)),
-                };
+            if let Some(base_rc) = weak_base.upgrade() {
+                let doc = Document::from_base_raw(base_rc);
                 doc.dispatch_capture_event_with_path(kind, event.target, path_ids);
                 if let Some(form_nid) = pending_reset_form_nid {
                     dispatch_form_reset_with_base_ref(base_doc, None, Some(form_nid));
