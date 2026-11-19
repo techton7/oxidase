@@ -143,6 +143,25 @@ impl Document {
         let click_state = RefCell::new(NativeBridgeClickState::default());
         let weak_inner = Rc::downgrade(&self.inner);
         base.borrow_mut().set_capture_hook(Some(Rc::new(move |base_doc, event, chain| {
+            if matches!(&event.data, DomEventData::Load | DomEventData::Error) {
+                if let Some(inner) = weak_inner.upgrade() {
+                    let doc = Document {
+                        inner,
+                        authoritative: Rc::new(Cell::new(true)),
+                        last_synced_len: Rc::new(Cell::new(0)),
+                    };
+                    doc.dispatch_image_status(
+                        event.target,
+                        if matches!(&event.data, DomEventData::Load) {
+                            crate::dom::observer::ImageLoadStatus::Loaded
+                        } else {
+                            crate::dom::observer::ImageLoadStatus::Error
+                        },
+                    );
+                }
+                return;
+            }
+
             if let DomEventData::Scroll(_) = &event.data {
                 if let Some(inner) = weak_inner.upgrade() {
                     let doc = Document {
@@ -878,6 +897,7 @@ impl Document {
     /// idempotently without re-processing earlier events or draining `pending_animation_events`.
     pub fn pump_hosted_observers(&self) {
         let Some(base) = self.get_base() else { return };
+        self.sync_image_observers();
         let cur_len = base.borrow().pending_animation_events.len();
         let prev_len = self.last_synced_len.get();
         let start_idx = if cur_len < prev_len {
@@ -892,6 +912,89 @@ impl Document {
         }
         self.finish_resolved_transition_observers();
         self.notify_layout_observers();
+    }
+
+    fn sync_image_observers(&self) {
+        let Some(base) = self.get_base() else {
+            return;
+        };
+        let base_ptr = Rc::as_ptr(&base);
+        let mut deferred = Vec::new();
+        let mut image_events = Vec::new();
+        {
+            let Ok(mut base) = base.try_borrow_mut() else {
+                return;
+            };
+            for _ in 0..1024 {
+                let Some(event) = base.pop_pending_event() else {
+                    break;
+                };
+                let status = match &event.data {
+                    DomEventData::Load => Some(crate::dom::observer::ImageLoadStatus::Loaded),
+                    DomEventData::Error => Some(crate::dom::observer::ImageLoadStatus::Error),
+                    _ => None,
+                };
+                if let Some(status) = status {
+                    let observed = CURRENT_OBSERVERS.with(|cell| {
+                        cell.try_borrow().is_ok_and(|registry| {
+                            registry.image_observers.values().any(|observer| {
+                                observer.node_id == event.target
+                                    && observer.base.upgrade().is_some_and(|observer_base| {
+                                        Rc::as_ptr(&observer_base) == base_ptr
+                                    })
+                            })
+                        })
+                    });
+                    if observed {
+                        image_events.push((event.target, status));
+                        continue;
+                    }
+                }
+                deferred.push(event);
+            }
+            for event in deferred {
+                base.queue_event(event);
+            }
+        }
+        for (node_id, status) in image_events {
+            self.dispatch_image_status(node_id, status);
+        }
+    }
+
+    fn dispatch_image_status(
+        &self,
+        node_id: blitz_dom::NodeId,
+        status: crate::dom::observer::ImageLoadStatus,
+    ) {
+        let Some(base) = self.get_base() else {
+            return;
+        };
+        let base_ptr = Rc::as_ptr(&base);
+        let callbacks = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(mut registry) = cell.try_borrow_mut() else {
+                return Vec::new();
+            };
+            registry
+                .image_observers
+                .values_mut()
+                .filter(|observer| {
+                    observer.node_id == node_id
+                        && observer.status == crate::dom::observer::ImageLoadStatus::Loading
+                        && observer.base.upgrade().is_some_and(|observer_base| {
+                            Rc::as_ptr(&observer_base) == base_ptr
+                        })
+                })
+                .map(|observer| {
+                    observer.status = status;
+                    observer.callback.clone()
+                })
+                .collect::<Vec<_>>()
+        });
+        for callback in callbacks {
+            if let Ok(mut callback) = callback.try_borrow_mut() {
+                callback(status);
+            }
+        }
     }
 
     fn finish_resolved_transition_observers(&self) {
@@ -1591,6 +1694,13 @@ struct FormResetObserverEntry {
     callback: Rc<RefCell<Box<dyn FnMut()>>>,
 }
 
+struct ImageObserverEntry {
+    node_id: blitz_dom::NodeId,
+    base: std::rc::Weak<RefCell<BaseDocument>>,
+    status: crate::dom::observer::ImageLoadStatus,
+    callback: Rc<RefCell<Box<dyn FnMut(crate::dom::observer::ImageLoadStatus)>>>,
+}
+
 #[derive(Default)]
 struct NativeObserverRegistry {
     resize_observers: std::collections::HashMap<u64, ResizeObserverEntry>,
@@ -1601,6 +1711,7 @@ struct NativeObserverRegistry {
     scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
     element_scroll_observers: std::collections::HashMap<String, Vec<(u64, Rc<RefCell<Box<dyn FnMut()>>>)>>,
     visibility_observers: std::collections::BTreeMap<u64, Rc<RefCell<Box<dyn FnMut(crate::dom::observer::DocumentVisibility)>>>>,
+    image_observers: std::collections::HashMap<u64, ImageObserverEntry>,
 }
 
 fn take_transition_observers(element_id: &str) -> Vec<TransitionObserverEntry> {
@@ -1860,6 +1971,111 @@ pub(crate) fn observe_visibility_change(
                     reg.visibility_observers.remove(&sub_id);
                 }
             });
+        },
+    ))
+}
+
+pub(crate) fn watch_image_load(
+    src: &str,
+    options: crate::dom::observer::ImageLoadOptions,
+    mut callback: Box<dyn FnMut(crate::dom::observer::ImageLoadStatus) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let base = Document::current()
+        .and_then(|doc| doc.get_base())
+        .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
+
+    callback(crate::dom::observer::ImageLoadStatus::Loading);
+    let sub_id = crate::internal::next_subscription_id();
+    let mut attrs = vec![
+        blitz_dom::Attribute {
+            name: blitz_dom::QualName::new(
+                None,
+                blitz_dom::ns!(),
+                blitz_dom::local_name!("style"),
+            ),
+            value: "display:none".into(),
+        },
+        blitz_dom::Attribute {
+            name: blitz_dom::QualName::new(
+                None,
+                blitz_dom::ns!(),
+                blitz_dom::local_name!("aria-hidden"),
+            ),
+            value: "true".into(),
+        },
+    ];
+    if let Some(crossorigin) = options.crossorigin {
+        attrs.push(blitz_dom::Attribute {
+            name: blitz_dom::QualName::new(
+                None,
+                blitz_dom::ns!(),
+                blitz_dom::local_name!("crossorigin"),
+            ),
+            value: crossorigin,
+        });
+    }
+    if let Some(referrerpolicy) = options.referrerpolicy {
+        attrs.push(blitz_dom::Attribute {
+            name: blitz_dom::QualName::new(
+                None,
+                blitz_dom::ns!(),
+                blitz_dom::local_name!("referrerpolicy"),
+            ),
+            value: referrerpolicy,
+        });
+    }
+    attrs.push(blitz_dom::Attribute {
+        name: blitz_dom::QualName::new(
+            None,
+            blitz_dom::ns!(),
+            blitz_dom::local_name!("src"),
+        ),
+        value: src.to_string(),
+    });
+
+    let node_id = {
+        let mut base_mut = base.borrow_mut();
+        let root_id = base_mut.root_node().id;
+        let mut mutator = base_mut.mutate();
+        let node_id = mutator.create_element(
+            blitz_dom::QualName::new(
+                None,
+                blitz_dom::ns!(html),
+                blitz_dom::local_name!("img"),
+            ),
+            attrs,
+        );
+        mutator.append_children(root_id, &[node_id]);
+        node_id
+    };
+    CURRENT_OBSERVERS.with(|cell| {
+        cell.borrow_mut().image_observers.insert(
+            sub_id,
+            ImageObserverEntry {
+                node_id,
+                base: Rc::downgrade(&base),
+                status: crate::dom::observer::ImageLoadStatus::Loading,
+                callback: Rc::new(RefCell::new(callback)),
+            },
+        );
+    });
+    let cleanup_base = base.clone();
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "native_image_load_observer",
+        sub_id,
+        None,
+        move || {
+            CURRENT_OBSERVERS.with(|cell| {
+                if let Ok(mut registry) = cell.try_borrow_mut() {
+                    registry.image_observers.remove(&sub_id);
+                }
+            });
+            if let Ok(mut base) = cleanup_base.try_borrow_mut()
+                && base.get_node(node_id).is_some()
+            {
+                base.mutate().remove_and_drop_node(node_id);
+            }
         },
     ))
 }

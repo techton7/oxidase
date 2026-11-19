@@ -1,5 +1,7 @@
 #[path = "frame_test.rs"]
 mod frame_test;
+#[path = "image_load_observer_test.rs"]
+mod image_load_observer_test;
 #[path = "macro_test.rs"]
 mod macro_test;
 #[path = "option_b_foundation_parity_test.rs"]
@@ -41,6 +43,7 @@ fn all_test_files_are_included() {
         "dom_native_test.rs",
         "floating_cross_host_test.rs",
         "frame_test.rs",
+        "image_load_observer_test.rs",
         "macro_test.rs",
         "option_b_foundation_parity_test.rs",
         "subwave_1b_form_substrate_test.rs",

@@ -1146,5 +1146,105 @@ pub(crate) fn observe_visibility_change(
     ))
 }
 
+pub(crate) fn watch_image_load(
+    src: &str,
+    options: crate::dom::observer::ImageLoadOptions,
+    callback: Box<dyn FnMut(crate::dom::observer::ImageLoadStatus) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let doc = web_sys::window()
+        .and_then(|window| window.document())
+        .ok_or_else(|| crate::error::HostError::Unsupported("No browser document".into()))?;
+    let element = doc.create_element("img").map_err(|_| {
+        crate::error::HostError::Unsupported("Unable to create image preloader".into())
+    })?;
+    let image = element
+        .dyn_into::<web_sys::HtmlImageElement>()
+        .map_err(|_| {
+            crate::error::HostError::Unsupported("Created element is not an image".into())
+        })?;
+    let target: web_sys::EventTarget = image.clone().into();
+
+    let callback = std::rc::Rc::new(std::cell::RefCell::new(Some(callback)));
+    let completed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let finish = {
+        let callback = callback.clone();
+        let completed = completed.clone();
+        move |status| {
+            if completed.replace(true) {
+                return;
+            }
+            if let Some(mut callback) = callback.borrow_mut().take() {
+                callback(status);
+            }
+        }
+    };
+    let finish = std::rc::Rc::new(std::cell::RefCell::new(finish));
+    let load_finish = finish.clone();
+    let load_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+        if let Ok(finish) = load_finish.try_borrow_mut() {
+            finish(crate::dom::observer::ImageLoadStatus::Loaded);
+        }
+    });
+    let error_finish = finish.clone();
+    let error_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+        if let Ok(finish) = error_finish.try_borrow_mut() {
+            finish(crate::dom::observer::ImageLoadStatus::Error);
+        }
+    });
+    target
+        .add_event_listener_with_callback("load", load_handler.as_ref().unchecked_ref())
+        .map_err(|_| crate::error::HostError::Unsupported("Unable to observe image load".into()))?;
+    target
+        .add_event_listener_with_callback("error", error_handler.as_ref().unchecked_ref())
+        .map_err(|_| {
+            crate::error::HostError::Unsupported("Unable to observe image error".into())
+        })?;
+
+    if let Some(crossorigin) = options.crossorigin.as_deref() {
+        image.set_cross_origin(Some(crossorigin));
+    }
+    if let Some(referrerpolicy) = options.referrerpolicy.as_deref() {
+        image.set_referrer_policy(referrerpolicy);
+    }
+    if let Ok(mut callback) = callback.try_borrow_mut()
+        && let Some(callback) = callback.as_mut()
+    {
+        callback(crate::dom::observer::ImageLoadStatus::Loading);
+    }
+    image.set_src(src);
+    if image.complete() {
+        if let Ok(finish) = finish.try_borrow_mut() {
+            finish(if image.natural_width() > 0 {
+                crate::dom::observer::ImageLoadStatus::Loaded
+            } else {
+                crate::dom::observer::ImageLoadStatus::Error
+            });
+        }
+    }
+
+    let callback_cleanup = callback;
+    let sub_id = crate::internal::next_subscription_id();
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "web_image_load_observer",
+        sub_id,
+        None,
+        move || {
+            let _ = target
+                .remove_event_listener_with_callback("load", load_handler.as_ref().unchecked_ref());
+            let _ = target.remove_event_listener_with_callback(
+                "error",
+                error_handler.as_ref().unchecked_ref(),
+            );
+            if let Ok(mut callback) = callback_cleanup.try_borrow_mut() {
+                callback.take();
+            }
+            image.set_src("");
+        },
+    ))
+}
+
 
 

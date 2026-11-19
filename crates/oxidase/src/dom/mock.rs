@@ -153,6 +153,42 @@ impl Document {
     #[inline]
     pub fn pump_hosted_observers(&self) {}
 
+    /// Deterministically updates a mock image state and notifies active image watchers.
+    pub fn set_image_load_status(&self, src: &str, status: crate::dom::observer::ImageLoadStatus) {
+        let status = MOCK_IMAGE_STATES.with(|cell| {
+            let mut states = cell.borrow_mut();
+            match status {
+                crate::dom::observer::ImageLoadStatus::Loading => {
+                    states.remove(src);
+                    status
+                }
+                terminal => {
+                    states.insert(src.to_string(), terminal);
+                    terminal
+                }
+            }
+        });
+        let callbacks = MOCK_IMAGE_OBSERVERS.with(|cell| {
+            cell.borrow()
+                .values()
+                .filter(|entry| entry.src == src)
+                .map(|entry| entry.callback.clone())
+                .collect::<Vec<_>>()
+        });
+        for callback in callbacks {
+            if let Ok(mut callback) = callback.try_borrow_mut() {
+                callback(status);
+            }
+        }
+    }
+
+    /// Clears deterministic cached state for a mock image URL.
+    pub fn clear_image_load_status(&self, src: &str) {
+        MOCK_IMAGE_STATES.with(|cell| {
+            cell.borrow_mut().remove(src);
+        });
+    }
+
     /// Returns the active observer counts for element scroll listeners.
     pub fn element_scroll_observer_count(&self, _element_id: Option<&str>) -> usize {
         0
@@ -252,6 +288,11 @@ pub(crate) fn observe_element_scroll(
 }
 
 std::thread_local! {
+    static MOCK_IMAGE_STATES: std::cell::RefCell<std::collections::HashMap<String, crate::dom::observer::ImageLoadStatus>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static MOCK_IMAGE_OBSERVERS: std::cell::RefCell<
+        std::collections::BTreeMap<u64, MockImageObserver>,
+    > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     static MOCK_DOCUMENT_HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static MOCK_VISIBILITY_OBSERVERS: std::cell::RefCell<
         std::collections::BTreeMap<
@@ -259,6 +300,44 @@ std::thread_local! {
             std::rc::Rc<std::cell::RefCell<Box<dyn FnMut(crate::dom::observer::DocumentVisibility)>>>,
         >,
     > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+struct MockImageObserver {
+    src: String,
+    callback:
+        std::rc::Rc<std::cell::RefCell<Box<dyn FnMut(crate::dom::observer::ImageLoadStatus)>>>,
+}
+
+pub(crate) fn watch_image_load(
+    src: &str,
+    _options: crate::dom::observer::ImageLoadOptions,
+    mut callback: Box<dyn FnMut(crate::dom::observer::ImageLoadStatus) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let initial = MOCK_IMAGE_STATES
+        .with(|cell| cell.borrow().get(src).copied())
+        .unwrap_or(crate::dom::observer::ImageLoadStatus::Loading);
+    callback(initial);
+
+    let sub_id = crate::internal::next_subscription_id();
+    MOCK_IMAGE_OBSERVERS.with(|cell| {
+        cell.borrow_mut().insert(
+            sub_id,
+            MockImageObserver {
+                src: src.to_string(),
+                callback: std::rc::Rc::new(std::cell::RefCell::new(callback)),
+            },
+        );
+    });
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "mock_image_load_observer",
+        sub_id,
+        None,
+        move || {
+            MOCK_IMAGE_OBSERVERS.with(|cell| {
+                cell.borrow_mut().remove(&sub_id);
+            });
+        },
+    ))
 }
 
 pub(crate) fn observe_visibility_change(

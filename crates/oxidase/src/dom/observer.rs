@@ -10,6 +10,22 @@ use crate::error::{HostError, Result};
 use crate::runtime::geometry::Rect;
 use crate::watcher_guard::WatcherGuard;
 
+/// Host-neutral state of an observed image request.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImageLoadStatus {
+    #[default]
+    Loading,
+    Loaded,
+    Error,
+}
+
+/// HTML image request policies which affect fetching, where supported by the host.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImageLoadOptions {
+    pub crossorigin: Option<String>,
+    pub referrerpolicy: Option<String>,
+}
+
 /// Host document visibility state (`document.visibilityState` on Web, window occlusion on Native).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocumentVisibility {
@@ -180,6 +196,15 @@ pub fn observe_visibility_change(
     callback: impl FnMut(DocumentVisibility) + 'static,
 ) -> std::result::Result<WatcherGuard, HostError> {
     crate::dom::backend::observe_visibility_change(Box::new(callback))
+}
+
+/// Observes loading of an image through an off-DOM browser preloader or the native resource pipeline.
+pub fn watch_image_load(
+    src: &str,
+    options: ImageLoadOptions,
+    callback: impl FnMut(ImageLoadStatus) + 'static,
+) -> Result<WatcherGuard> {
+    crate::dom::backend::watch_image_load(src, options, Box::new(callback))
 }
 
 
