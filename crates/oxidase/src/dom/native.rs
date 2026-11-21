@@ -178,6 +178,10 @@ impl Document {
 
                 if let DomEventData::Scroll(_) = &event.data {
                     if let Some(base_rc) = weak_base.upgrade() {
+                        let is_root_viewport = base_doc
+                            .try_root_element()
+                            .is_some_and(|root| root.id == event.target)
+                            || event.target == base_doc.root_node().id;
                         if base_rc.try_borrow().is_err() {
                             let element_id = base_doc
                                 .get_node(event.target)
@@ -187,6 +191,9 @@ impl Document {
                             CURRENT_OBSERVERS.with(|cell| {
                                 if let Ok(mut reg) = cell.try_borrow_mut() {
                                     reg.pending_scroll_dispatch = true;
+                                    if is_root_viewport {
+                                        reg.pending_viewport_scroll_dispatch = true;
+                                    }
                                     if let Some(id) = element_id
                                         && !reg.pending_element_scroll_ids.contains(&id)
                                     {
@@ -204,6 +211,9 @@ impl Document {
                                 doc.dispatch_element_scroll(id);
                             }
                             doc.dispatch_scroll();
+                            if is_root_viewport {
+                                doc.dispatch_viewport_scroll();
+                            }
                         }
                     }
                     return;
@@ -447,6 +457,7 @@ impl Document {
         if let Some(base) = self.get_base() {
             base.borrow_mut()
                 .set_viewport_scroll(blitz_dom::Point { x, y });
+            self.dispatch_viewport_scroll();
             self.dispatch_scroll();
         }
     }
@@ -1140,19 +1151,25 @@ impl Document {
         if !self.get_base().is_some_and(|b| b.try_borrow().is_ok()) {
             return;
         }
-        let (pending_scroll, pending_ids) = CURRENT_OBSERVERS.with(|cell| {
-            let Ok(mut reg) = cell.try_borrow_mut() else {
-                return (false, Vec::new());
-            };
-            let pending_scroll = std::mem::take(&mut reg.pending_scroll_dispatch);
-            let pending_ids = std::mem::take(&mut reg.pending_element_scroll_ids);
-            (pending_scroll, pending_ids)
-        });
+        let (pending_scroll, pending_viewport_scroll, pending_ids) =
+            CURRENT_OBSERVERS.with(|cell| {
+                let Ok(mut reg) = cell.try_borrow_mut() else {
+                    return (false, false, Vec::new());
+                };
+                let pending_scroll = std::mem::take(&mut reg.pending_scroll_dispatch);
+                let pending_viewport_scroll =
+                    std::mem::take(&mut reg.pending_viewport_scroll_dispatch);
+                let pending_ids = std::mem::take(&mut reg.pending_element_scroll_ids);
+                (pending_scroll, pending_viewport_scroll, pending_ids)
+            });
         for id in pending_ids {
             self.dispatch_element_scroll(&id);
         }
         if pending_scroll {
             self.dispatch_scroll();
+        }
+        if pending_viewport_scroll {
+            self.dispatch_viewport_scroll();
         }
     }
 
@@ -1533,6 +1550,21 @@ impl Document {
                 return Vec::new();
             };
             reg.scroll_observers.values().cloned().collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb();
+            }
+        }
+    }
+
+    /// Dispatches a scroll event to viewport-only scroll observers.
+    pub fn dispatch_viewport_scroll(&self) {
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.viewport_scroll_observers.values().cloned().collect::<Vec<_>>()
         });
         for handle in handles {
             if let Ok(mut cb) = handle.try_borrow_mut() {
@@ -1985,9 +2017,11 @@ struct NativeObserverRegistry {
     transition_observers: std::collections::HashMap<u64, TransitionObserverEntry>,
     form_reset_observers: std::collections::HashMap<u64, FormResetObserverEntry>,
     scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
+    viewport_scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
     element_scroll_observers:
         std::collections::HashMap<String, Vec<(u64, Rc<RefCell<Box<dyn FnMut()>>>)>>,
     pending_scroll_dispatch: bool,
+    pending_viewport_scroll_dispatch: bool,
     pending_element_scroll_ids: Vec<String>,
     visibility_observers: std::collections::BTreeMap<
         u64,
@@ -2208,6 +2242,30 @@ pub(crate) fn observe_scroll(
             CURRENT_OBSERVERS.with(|cell| {
                 if let Ok(mut reg) = cell.try_borrow_mut() {
                     reg.scroll_observers.remove(&sub_id);
+                }
+            });
+        },
+    ))
+}
+
+pub(crate) fn observe_viewport_scroll(
+    callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let sub_id = crate::internal::next_subscription_id();
+    CURRENT_OBSERVERS.with(|cell| {
+        cell.borrow_mut()
+            .viewport_scroll_observers
+            .insert(sub_id, Rc::new(RefCell::new(callback)));
+    });
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "native_viewport_scroll_observer",
+        sub_id,
+        None,
+        move || {
+            CURRENT_OBSERVERS.with(|cell| {
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.viewport_scroll_observers.remove(&sub_id);
                 }
             });
         },

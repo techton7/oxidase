@@ -1386,6 +1386,44 @@ pub(crate) fn observe_scroll(
     ))
 }
 
+pub(crate) fn observe_viewport_scroll(
+    mut callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let sub_id = crate::internal::next_subscription_id();
+    let win = web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
+
+    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        callback();
+    });
+
+    let opts = web_sys::AddEventListenerOptions::new();
+    opts.set_capture(false);
+    opts.set_passive(true);
+
+    let win_target: web_sys::EventTarget = win.clone().into();
+    let _ = win_target.add_event_listener_with_callback_and_add_event_listener_options(
+        "scroll",
+        handler.as_ref().unchecked_ref(),
+        &opts,
+    );
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "web_viewport_scroll_observer",
+        sub_id,
+        None,
+        move || {
+            let _ = win_target.remove_event_listener_with_callback_and_bool(
+                "scroll",
+                handler.as_ref().unchecked_ref(),
+                false,
+            );
+        },
+    ))
+}
+
 pub(crate) fn observe_element_scroll(
     element_id: &str,
     mut callback: Box<dyn FnMut() + 'static>,

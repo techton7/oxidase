@@ -199,6 +199,13 @@ pub fn observe_scroll(callback: impl FnMut() + 'static) -> Result<WatcherGuard> 
     crate::dom::backend::observe_scroll(Box::new(callback))
 }
 
+/// Observes viewport or document-level scroll events across Web and Native hosts.
+pub fn observe_viewport_scroll(
+    callback: impl FnMut() + 'static,
+) -> Result<WatcherGuard> {
+    crate::dom::backend::observe_viewport_scroll(Box::new(callback))
+}
+
 /// Observes scroll events on a specific element container across Web and Native hosts.
 pub fn observe_element_scroll(
     element_id: &str,

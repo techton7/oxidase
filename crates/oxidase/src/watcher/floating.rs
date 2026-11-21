@@ -2,7 +2,9 @@
 //!
 //! Monitors reference resizing and ancestor scrolling with substrate-level frame coalescing (at most 1 notification per 16ms render frame).
 
-use crate::dom::observer::{observe_element_resize, observe_element_scroll, observe_scroll, ResizeEntry};
+use crate::dom::observer::{
+    observe_element_resize, observe_element_scroll, observe_viewport_scroll, ResizeEntry,
+};
 use crate::error::Result;
 use crate::watcher_guard::WatcherGuard;
 use serde::{Deserialize, Serialize};
@@ -284,7 +286,7 @@ pub fn watch_floating_auto_update_with_options(
 
         // Register global viewport scroll observer
         let emit = emit_throttled.clone();
-        let scroll_guard = observe_scroll(move || {
+        let scroll_guard = observe_viewport_scroll(move || {
             emit(FloatingAutoUpdateEvent::Scroll);
         })?;
         inner_guards.push(scroll_guard);

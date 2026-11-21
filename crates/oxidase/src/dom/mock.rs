@@ -332,6 +332,12 @@ pub(crate) fn observe_scroll(
     ))
 }
 
+pub(crate) fn observe_viewport_scroll(
+    _callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new("mock_viewport_scroll", 0, None))
+}
+
 pub(crate) fn observe_element_scroll(
     _element_id: &str,
     _callback: Box<dyn FnMut() + 'static>,

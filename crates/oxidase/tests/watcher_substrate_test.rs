@@ -10,6 +10,7 @@ use oxidase::dom::observer::{
     CaptureEventKind, TransitionLifecycleEvent,
 };
 use oxidase::prelude::*;
+use oxidase::watcher::watch_floating_auto_update_with_options;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -1017,6 +1018,148 @@ fn test_live_blitz_transition_completion_dispatch() {
         assert!(
             !ctx.base.borrow().pending_animation_events.is_empty(),
             "Pending animation/transition events must be preserved for flush_animation_events"
+        );
+    });
+}
+
+#[test]
+fn test_floating_auto_update_ignores_descendant_scroll_but_capture_all_observes_it() {
+    let ctx = TestContext::new();
+    let _anchor_id = ctx.add_element(ctx.root_id, "button", "anchor-btn", 20.0, 20.0, 100.0, 30.0);
+    let content_id = ctx.add_element(
+        ctx.root_id,
+        "div",
+        "floating-content",
+        180.0,
+        20.0,
+        240.0,
+        180.0,
+    );
+    {
+        let mut base = ctx.base.borrow_mut();
+        let mut mutator = base.mutate();
+        let scroll_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "floating-descendant-scroll".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "display: block; position: absolute; left: 10px; top: 10px; width: 120px; height: 80px; overflow-y: auto;".into(),
+                },
+            ],
+        );
+        let spacer_id = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![Attribute {
+                name: QualName::new(None, ns!(), local_name!("style")),
+                value: "display: block; width: 100px; height: 400px;".into(),
+            }],
+        );
+        mutator.append_children(scroll_id, &[spacer_id]);
+        mutator.append_children(content_id, &[scroll_id]);
+    }
+
+    ctx.doc.resolve(0.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let event_sink = events.clone();
+        let mut options = FloatingAutoUpdateOptions::new(&["anchor-btn"], "floating-content");
+        options.ancestor_resize = false;
+        options.element_resize = false;
+        let _floating_guard = watch_floating_auto_update_with_options(options, move |event| {
+            event_sink.borrow_mut().push(event);
+        })
+        .expect("floating watcher registration must succeed");
+
+        let capture_all_count = Rc::new(std::cell::Cell::new(0usize));
+        let count = capture_all_count.clone();
+        let _capture_all_guard =
+            observe_scroll(move || count.set(count.get() + 1)).expect("observe_scroll must succeed");
+
+        let descendant_scroll = ctx
+            .doc
+            .element_by_id("floating-descendant-scroll")
+            .expect("floating descendant scroll container must exist");
+        block_on(descendant_scroll.scroll_to(0.0, 35.0))
+            .expect("descendant scroll_to must succeed");
+        flush_pending_events(&ctx);
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
+
+        assert_eq!(
+            block_on(descendant_scroll.scroll_y()).expect("descendant scroll_y must succeed"),
+            35.0,
+            "Blitz must apply the descendant element scroll"
+        );
+        assert!(
+            events.borrow().is_empty(),
+            "Scrolling a descendant of floating content must not emit auto-update events"
+        );
+        assert!(
+            capture_all_count.get() > 0,
+            "observe_scroll must preserve capture-all descendant scroll behavior"
+        );
+    });
+}
+
+#[test]
+fn test_floating_auto_update_observes_strict_ancestor_and_root_viewport_scroll() {
+    let ctx = TestContext::new();
+    let scroll_id =
+        ctx.add_scroll_container(ctx.root_id, "strict-scroll", 0.0, 0.0, 400.0, 300.0);
+    let _anchor_id =
+        ctx.add_element(scroll_id, "button", "strict-anchor", 20.0, 20.0, 100.0, 30.0);
+    let _floating_id = ctx.add_element(
+        ctx.root_id,
+        "div",
+        "strict-floating",
+        450.0,
+        20.0,
+        120.0,
+        80.0,
+    );
+
+    ctx.doc.resolve(0.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let event_sink = events.clone();
+        let mut options =
+            FloatingAutoUpdateOptions::new(&["strict-anchor"], "strict-floating");
+        options.ancestor_resize = false;
+        options.element_resize = false;
+        let _guard = watch_floating_auto_update_with_options(options, move |event| {
+            event_sink.borrow_mut().push(event);
+        })
+        .expect("floating watcher registration must succeed");
+
+        let ancestor = ctx
+            .doc
+            .element_by_id("strict-scroll")
+            .expect("strict overflow ancestor must exist");
+        block_on(ancestor.scroll_to(0.0, 30.0)).expect("ancestor scroll_to must succeed");
+        flush_pending_events(&ctx);
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            [FloatingAutoUpdateEvent::Scroll],
+            "strict overflow ancestor scroll must emit one Scroll event"
+        );
+
+        ctx.doc.set_viewport_scroll(0.0, 25.0);
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                FloatingAutoUpdateEvent::Scroll,
+                FloatingAutoUpdateEvent::Scroll
+            ],
+            "root viewport scroll must emit a second Scroll event"
         );
     });
 }
