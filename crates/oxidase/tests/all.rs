@@ -8,6 +8,8 @@ mod macro_test;
 mod option_b_foundation_parity_test;
 #[path = "subwave_1b_form_substrate_test.rs"]
 mod subwave_1b_form_substrate_test;
+#[path = "subwave_2b_substrate_test.rs"]
+mod subwave_2b_substrate_test;
 #[path = "toast_substrate_parity_test.rs"]
 mod toast_substrate_parity_test;
 #[path = "track1b_substrate_test.rs"]
@@ -47,6 +49,7 @@ fn all_test_files_are_included() {
         "macro_test.rs",
         "option_b_foundation_parity_test.rs",
         "subwave_1b_form_substrate_test.rs",
+        "subwave_2b_substrate_test.rs",
         "toast_substrate_parity_test.rs",
         "track1b_substrate_test.rs",
         "watcher_substrate_test.rs",

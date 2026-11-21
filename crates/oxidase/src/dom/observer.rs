@@ -54,6 +54,14 @@ pub struct ResizeEntry {
     pub content_rect: Rect,
 }
 
+/// The box model sizing convention used by [`observe_element_resize_with_box`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ResizeObserverBox {
+    #[default]
+    BorderBox,
+    ContentBox,
+}
+
 /// The kind of global capture interaction intercepted.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CaptureEventKind {
@@ -118,7 +126,10 @@ impl CaptureEvent {
         if boundary_ids.is_empty() {
             return true;
         }
-        !self.path_ids.iter().any(|id| boundary_ids.contains(&id.as_str()))
+        !self
+            .path_ids
+            .iter()
+            .any(|id| boundary_ids.contains(&id.as_str()))
     }
 }
 
@@ -135,12 +146,21 @@ pub enum TransitionLifecycleEvent {
     Stopped,
 }
 
-/// Observes layout and dimensional changes of an element across Web and Native hosts.
+/// Observes layout and dimensional changes of an element using a specific box model.
+pub fn observe_element_resize_with_box(
+    element_id: &str,
+    box_model: ResizeObserverBox,
+    callback: impl FnMut(ResizeEntry) + 'static,
+) -> Result<WatcherGuard> {
+    crate::dom::backend::observe_element_resize_with_box(element_id, box_model, Box::new(callback))
+}
+
+/// Observes layout and dimensional changes of an element across Web and Native hosts using default border-box sizing.
 pub fn observe_element_resize(
     element_id: &str,
     callback: impl FnMut(ResizeEntry) + 'static,
 ) -> Result<WatcherGuard> {
-    crate::dom::backend::observe_element_resize(element_id, Box::new(callback))
+    observe_element_resize_with_box(element_id, ResizeObserverBox::BorderBox, callback)
 }
 
 /// Observes global capture-phase interactions across Web and Native hosts.
@@ -170,16 +190,12 @@ pub fn observe_form_reset(
 /// Observes passive document-wide pointer move coordinates `(client_x, client_y)` across Web and Native hosts.
 ///
 /// Uses passive document observation and never acquires W3C pointer capture.
-pub fn observe_pointer_move(
-    callback: impl FnMut(f64, f64) + 'static,
-) -> Result<WatcherGuard> {
+pub fn observe_pointer_move(callback: impl FnMut(f64, f64) + 'static) -> Result<WatcherGuard> {
     crate::dom::backend::observe_pointer_move(Box::new(callback))
 }
 
 /// Observes scroll events across viewport and scrollable ancestor containers.
-pub fn observe_scroll(
-    callback: impl FnMut() + 'static,
-) -> Result<WatcherGuard> {
+pub fn observe_scroll(callback: impl FnMut() + 'static) -> Result<WatcherGuard> {
     crate::dom::backend::observe_scroll(Box::new(callback))
 }
 
@@ -206,5 +222,3 @@ pub fn watch_image_load(
 ) -> Result<WatcherGuard> {
     crate::dom::backend::watch_image_load(src, options, Box::new(callback))
 }
-
-

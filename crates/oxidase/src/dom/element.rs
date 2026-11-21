@@ -125,8 +125,10 @@ impl Element {
                         if let Some(parent_node) = base.get_node(parent_id) {
                             let parent_layout = parent_node.final_layout();
                             if parent_node.taffy_position() == blitz_dom::taffy::Position::Fixed {
-                                x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
-                                y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
+                                x +=
+                                    parent_layout.location.x as f64 - parent_node.scroll_offset().x;
+                                y +=
+                                    parent_layout.location.y as f64 - parent_node.scroll_offset().y;
                                 hit_fixed_ancestor = true;
                                 break;
                             }
@@ -403,11 +405,13 @@ impl Element {
                 .map(|b| b.active_focus_node_id() == Some(*node_id))
                 .unwrap_or(false),
             #[cfg(target_arch = "wasm32")]
-            ElementTarget::Web(el) => web_sys::window()
-                .and_then(|w| w.document())
-                .and_then(|d| d.active_element())
-                .as_ref()
-                == Some(el),
+            ElementTarget::Web(el) => {
+                web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.active_element())
+                    .as_ref()
+                    == Some(el)
+            }
             ElementTarget::Mounted(_) => false,
             #[cfg(not(target_arch = "wasm32"))]
             ElementTarget::Mock => false,
@@ -611,7 +615,11 @@ impl Element {
                 Some(Self::from_native(doc.clone(), nid))
             }
             #[cfg(target_arch = "wasm32")]
-            ElementTarget::Web(el) => el.query_selector(selector).ok().flatten().map(Self::from_web),
+            ElementTarget::Web(el) => el
+                .query_selector(selector)
+                .ok()
+                .flatten()
+                .map(Self::from_web),
             ElementTarget::Mounted(_) => None,
             #[cfg(not(target_arch = "wasm32"))]
             ElementTarget::Mock => None,
@@ -741,12 +749,14 @@ impl Element {
         }
     }
 
-    /// Queries the current horizontal scroll offset of the element.
-    pub async fn scroll_x(&self) -> Result<f64, HostError> {
+    /// Queries the current horizontal scroll offset of the element synchronously.
+    pub fn scroll_x_sync(&self) -> Result<f64, HostError> {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let base = doc.borrow();
+                let base = doc.try_borrow().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
                 let Some(node) = base.get_node(*node_id) else {
                     return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
                 };
@@ -760,12 +770,14 @@ impl Element {
         }
     }
 
-    /// Queries the current vertical scroll offset of the element.
-    pub async fn scroll_y(&self) -> Result<f64, HostError> {
+    /// Queries the current vertical scroll offset of the element synchronously.
+    pub fn scroll_y_sync(&self) -> Result<f64, HostError> {
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
-                let base = doc.borrow();
+                let base = doc.try_borrow().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
                 let Some(node) = base.get_node(*node_id) else {
                     return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
                 };
@@ -779,18 +791,103 @@ impl Element {
         }
     }
 
-    /// Scrolls the element to the specified `(x, y)` coordinates.
-    pub async fn scroll_to(&self, x: f64, y: f64) -> Result<(), HostError> {
+    /// Queries the total scrollable width of the element in pixels synchronously.
+    pub fn scroll_width_sync(&self) -> Result<f64, HostError> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                let Some(node) = base.get_node(*node_id) else {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                };
+                Ok(node.scroll_width() as f64)
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => Ok(el.scroll_width() as f64),
+            ElementTarget::Mounted(_) => Ok(0.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(0.0),
+        }
+    }
+
+    /// Queries the total scrollable height of the element in pixels synchronously.
+    pub fn scroll_height_sync(&self) -> Result<f64, HostError> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                let Some(node) = base.get_node(*node_id) else {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                };
+                Ok(node.scroll_height() as f64)
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => Ok(el.scroll_height() as f64),
+            ElementTarget::Mounted(_) => Ok(0.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(0.0),
+        }
+    }
+
+    /// Queries the inner visible width of the element in pixels synchronously.
+    pub fn client_width_sync(&self) -> Result<f64, HostError> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                let Some(node) = base.get_node(*node_id) else {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                };
+                Ok(node.client_width() as f64)
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => Ok(el.client_width() as f64),
+            ElementTarget::Mounted(_) => Ok(0.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(0.0),
+        }
+    }
+
+    /// Queries the inner visible height of the element in pixels synchronously.
+    pub fn client_height_sync(&self) -> Result<f64, HostError> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                let Some(node) = base.get_node(*node_id) else {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                };
+                Ok(node.client_height() as f64)
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => Ok(el.client_height() as f64),
+            ElementTarget::Mounted(_) => Ok(0.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(0.0),
+        }
+    }
+
+    /// Scrolls the element to the specified `(x, y)` coordinates synchronously.
+    pub fn scroll_to_sync(&self, x: f64, y: f64) -> Result<(), HostError> {
+        let _ = (x, y);
         match &self.target {
             #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
             ElementTarget::Native { doc, node_id } => {
                 let nid = *node_id;
-                let mut base = doc.borrow_mut();
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
                 if base.get_node(nid).is_none() {
                     return Err(HostError::ElementNotFound(format!("NodeId: {:?}", nid)));
                 }
-                // The engine queues the resulting `scroll` event; it is dispatched through the
-                // capture hook when the host drains pending events (e.g. `DioxusDocument::poll`).
                 base.scroll_to(nid, x, y, blitz_dom::ScrollBehavior::Instant);
                 Ok(())
             }
@@ -799,6 +896,52 @@ impl Element {
                 el.scroll_to_with_x_and_y(x, y);
                 Ok(())
             }
+            ElementTarget::Mounted(_) => Ok(()),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(()),
+        }
+    }
+
+    /// Scrolls the element by relative offset `(dx, dy)` synchronously.
+    pub fn scroll_by_sync(&self, dx: f64, dy: f64) -> Result<(), HostError> {
+        let cur_x = self.scroll_x_sync()?;
+        let cur_y = self.scroll_y_sync()?;
+        self.scroll_to_sync(cur_x + dx, cur_y + dy)
+    }
+
+    /// Queries the current horizontal scroll offset of the element.
+    pub async fn scroll_x(&self) -> Result<f64, HostError> {
+        self.scroll_x_sync()
+    }
+
+    /// Queries the current vertical scroll offset of the element.
+    pub async fn scroll_y(&self) -> Result<f64, HostError> {
+        self.scroll_y_sync()
+    }
+
+    /// Queries the total scrollable width of the element in pixels.
+    pub async fn scroll_width(&self) -> Result<f64, HostError> {
+        self.scroll_width_sync()
+    }
+
+    /// Queries the total scrollable height of the element in pixels.
+    pub async fn scroll_height(&self) -> Result<f64, HostError> {
+        self.scroll_height_sync()
+    }
+
+    /// Queries the inner visible width of the element in pixels.
+    pub async fn client_width(&self) -> Result<f64, HostError> {
+        self.client_width_sync()
+    }
+
+    /// Queries the inner visible height of the element in pixels.
+    pub async fn client_height(&self) -> Result<f64, HostError> {
+        self.client_height_sync()
+    }
+
+    /// Scrolls the element to the specified `(x, y)` coordinates.
+    pub async fn scroll_to(&self, x: f64, y: f64) -> Result<(), HostError> {
+        match &self.target {
             ElementTarget::Mounted(handle) => {
                 let _ = handle
                     .scroll(
@@ -808,8 +951,7 @@ impl Element {
                     .await;
                 Ok(())
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            ElementTarget::Mock => Ok(()),
+            _ => self.scroll_to_sync(x, y),
         }
     }
 
@@ -827,7 +969,8 @@ impl Element {
             ElementTarget::Native { doc, node_id } => {
                 let base = doc.borrow();
                 let node = base.get_node(*node_id)?;
-                node.attr(blitz_dom::local_name!("id")).map(|s| s.to_string())
+                node.attr(blitz_dom::local_name!("id"))
+                    .map(|s| s.to_string())
             }
             #[cfg(target_arch = "wasm32")]
             ElementTarget::Web(el) => {
@@ -872,7 +1015,10 @@ impl Element {
                 let elem = node.element_data()?;
                 elem.attrs
                     .iter()
-                    .find(|a| (a.name.ns == blitz_dom::ns!() || a.name.ns.is_empty()) && &*a.name.local == name)
+                    .find(|a| {
+                        (a.name.ns == blitz_dom::ns!() || a.name.ns.is_empty())
+                            && &*a.name.local == name
+                    })
                     .map(|a| a.value.to_string())
             }
             #[cfg(target_arch = "wasm32")]
@@ -950,15 +1096,82 @@ impl Element {
                 let Some(elem) = node.element_data() else {
                     return false;
                 };
-                elem.attrs
-                    .iter()
-                    .any(|a| (a.name.ns == blitz_dom::ns!() || a.name.ns.is_empty()) && &*a.name.local == name)
+                elem.attrs.iter().any(|a| {
+                    (a.name.ns == blitz_dom::ns!() || a.name.ns.is_empty())
+                        && &*a.name.local == name
+                })
             }
             #[cfg(target_arch = "wasm32")]
             ElementTarget::Web(el) => el.has_attribute(name),
             ElementTarget::Mounted(_) => false,
             #[cfg(not(target_arch = "wasm32"))]
             ElementTarget::Mock => false,
+        }
+    }
+
+    /// Sets an inline CSS style property on this element.
+    pub fn set_style_property(&self, property: &str, value: &str) -> Result<(), HostError> {
+        let _ = (property, value);
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                if base
+                    .get_node(*node_id)
+                    .and_then(|n| n.element_data())
+                    .is_none()
+                {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                }
+                base.set_style_property(*node_id, property, value);
+                Ok(())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                if let Ok(html_el) = el.clone().dyn_into::<web_sys::HtmlElement>() {
+                    let _ = html_el.style().set_property(property, value);
+                }
+                Ok(())
+            }
+            ElementTarget::Mounted(_) => Ok(()),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(()),
+        }
+    }
+
+    /// Removes an inline CSS style property from this element.
+    pub fn remove_style_property(&self, property: &str) -> Result<(), HostError> {
+        let _ = property;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                if base
+                    .get_node(*node_id)
+                    .and_then(|n| n.element_data())
+                    .is_none()
+                {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                }
+                base.remove_style_property(*node_id, property);
+                Ok(())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                if let Ok(html_el) = el.clone().dyn_into::<web_sys::HtmlElement>() {
+                    let _ = html_el.style().remove_property(property);
+                }
+                Ok(())
+            }
+            ElementTarget::Mounted(_) => Ok(()),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(()),
         }
     }
 }
@@ -1011,9 +1224,11 @@ pub fn mouse_event_target(evt: &dioxus::prelude::MouseData) -> Option<Element> {
     #[cfg(target_arch = "wasm32")]
     {
         use wasm_bindgen::JsCast;
-        let web_event: &web_sys::MouseEvent = evt
-            .downcast::<web_sys::MouseEvent>()
-            .or_else(|| evt.downcast::<web_sys::PointerEvent>().map(|pe| pe.as_ref()))?;
+        let web_event: &web_sys::MouseEvent =
+            evt.downcast::<web_sys::MouseEvent>().or_else(|| {
+                evt.downcast::<web_sys::PointerEvent>()
+                    .map(|pe| pe.as_ref())
+            })?;
         let target = web_event.target()?;
         if let Ok(el) = target.clone().dyn_into::<web_sys::Element>() {
             return Some(Element::from_web(el));
@@ -1068,12 +1283,7 @@ impl Default for NativeMouseClickTracker {
     allow(dead_code)
 )]
 impl NativeMouseClickTracker {
-    pub(crate) fn record_primary_press(
-        &mut self,
-        now: std::time::Instant,
-        x: f64,
-        y: f64,
-    ) -> i32 {
+    pub(crate) fn record_primary_press(&mut self, now: std::time::Instant, x: f64, y: f64) -> i32 {
         if let Some(prev_time) = self.last_mousedown_time {
             let elapsed = now.saturating_duration_since(prev_time);
             if elapsed < std::time::Duration::from_micros(50)
@@ -1105,10 +1315,10 @@ impl NativeMouseClickTracker {
 pub fn mouse_event_detail(evt: &dioxus::prelude::MouseData) -> i32 {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(web_event) = evt
-            .downcast::<web_sys::MouseEvent>()
-            .or_else(|| evt.downcast::<web_sys::PointerEvent>().map(|pe| pe.as_ref()))
-        {
+        if let Some(web_event) = evt.downcast::<web_sys::MouseEvent>().or_else(|| {
+            evt.downcast::<web_sys::PointerEvent>()
+                .map(|pe| pe.as_ref())
+        }) {
             return web_event.detail();
         }
         return 1;
@@ -1235,6 +1445,16 @@ mod tests {
             assert_eq!(el.get_attribute("data-state"), None);
             el.set_attribute("data-state", "open");
             el.remove_attribute("data-state");
+            assert_eq!(el.scroll_x_sync().unwrap(), 0.0);
+            assert_eq!(el.scroll_y_sync().unwrap(), 0.0);
+            assert_eq!(el.scroll_width_sync().unwrap(), 0.0);
+            assert_eq!(el.scroll_height_sync().unwrap(), 0.0);
+            assert_eq!(el.client_width_sync().unwrap(), 0.0);
+            assert_eq!(el.client_height_sync().unwrap(), 0.0);
+            assert!(el.scroll_to_sync(10.0, 20.0).is_ok());
+            assert!(el.scroll_by_sync(5.0, 5.0).is_ok());
+            assert!(el.set_style_property("user-select", "none").is_ok());
+            assert!(el.remove_style_property("user-select").is_ok());
             let debug_str = format!("{:?}", el);
             assert!(debug_str.contains("Element"));
         }
@@ -1285,4 +1505,3 @@ mod tests {
         assert_eq!(tracker.record_primary_press(t4, 106.0, 200.0), 1);
     }
 }
-

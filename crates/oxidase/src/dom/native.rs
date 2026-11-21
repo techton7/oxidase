@@ -61,6 +61,19 @@ fn lookup_node_id(base: &BaseDocument, id: &str) -> Option<blitz_dom::NodeId> {
         })
 }
 
+fn prune_measurement_animation_events(
+    base: &mut BaseDocument,
+    prev_anim_len: usize,
+    node_id: blitz_dom::NodeId,
+) {
+    let mut idx = 0usize;
+    base.pending_animation_events.retain(|ev| {
+        let keep = idx < prev_anim_len || ev.node_id != node_id;
+        idx += 1;
+        keep
+    });
+}
+
 impl Document {
     /// Returns the active native Blitz document if available in current thread or Dioxus context.
     pub fn current() -> Option<Self> {
@@ -83,9 +96,10 @@ impl Document {
 
         // 2. Check thread-local (active during harness dispatch or scoped execution in Blitz)
         if let Some(doc) = CURRENT_NATIVE_DOC.with(|cell| cell.borrow().clone())
-            && doc.get_base().is_some() {
-                return Some(doc);
-            }
+            && doc.get_base().is_some()
+        {
+            return Some(doc);
+        }
 
         None
     }
@@ -145,181 +159,200 @@ impl Document {
 
         let click_state = RefCell::new(NativeBridgeClickState::default());
         let weak_base = Rc::downgrade(&base);
-        base.borrow_mut().set_capture_hook(Some(Rc::new(move |base_doc, event, chain| {
-            if matches!(&event.data, DomEventData::Load | DomEventData::Error) {
-                if let Some(base_rc) = weak_base.upgrade() {
-                    let doc = Document::from_base_raw(base_rc);
-                    doc.dispatch_image_status(
-                        event.target,
-                        if matches!(&event.data, DomEventData::Load) {
-                            crate::dom::observer::ImageLoadStatus::Loaded
-                        } else {
-                            crate::dom::observer::ImageLoadStatus::Error
-                        },
-                    );
-                }
-                return;
-            }
-
-            if let DomEventData::Scroll(_) = &event.data {
-                if let Some(base_rc) = weak_base.upgrade() {
-                    let doc = Document::from_base_raw(base_rc);
-                    if let Some(node) = base_doc.get_node(event.target)
-                        && let Some(el) = node.element_data()
-                        && let Some(id) = &el.id
-                    {
-                        doc.dispatch_element_scroll(id);
-                    }
-                    doc.dispatch_scroll();
-                }
-                return;
-            }
-
-            if let DomEventData::PointerMove(pe) = &event.data {
-                if let Some(base_rc) = weak_base.upgrade() {
-                    let doc = Document::from_base_raw(base_rc);
-                    doc.dispatch_pointer_move(pe.client_x() as f64, pe.client_y() as f64);
-                }
-                return;
-            }
-
-            if let DomEventData::PointerCancel(_) = &event.data {
-                if let Ok(mut st) = click_state.try_borrow_mut() {
-                    st.armed_pointer_click = false;
-                }
-                return;
-            }
-
-            if let DomEventData::KeyUp(key_event) = &event.data {
-                use dioxus::prelude::keyboard_types::Key;
-                if matches!(&key_event.key, Key::Character(s) if s == " ")
-                    && let Ok(mut st) = click_state.try_borrow_mut()
-                {
-                    st.armed_key_click = true;
-                }
-                return;
-            }
-
-            let mut pending_reset_form_nid: Option<blitz_dom::NodeId> = None;
-
-            let Some(kind) = (match &event.data {
-                DomEventData::PointerDown(pe) => {
-                    let pointer_type = match pe.id {
-                        blitz_traits::events::BlitzPointerId::Mouse => "mouse".to_string(),
-                        blitz_traits::events::BlitzPointerId::Pen => "pen".to_string(),
-                        blitz_traits::events::BlitzPointerId::Finger(_) => "touch".to_string(),
-                    };
-                    if let Ok(mut st) = click_state.try_borrow_mut() {
-                        if pe.button == blitz_traits::events::MouseEventButton::Main {
-                            let (x, y) = (pe.page_x(), pe.page_y());
-                            st.click_count = if st
-                                .last_mousedown_time
-                                .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500))
-                                && (st.mousedown_pos.0 - x).abs() <= 2.0
-                                && (st.mousedown_pos.1 - y).abs() <= 2.0
-                            {
-                                st.click_count.saturating_add(1)
+        base.borrow_mut()
+            .set_capture_hook(Some(Rc::new(move |base_doc, event, chain| {
+                if matches!(&event.data, DomEventData::Load | DomEventData::Error) {
+                    if let Some(base_rc) = weak_base.upgrade() {
+                        let doc = Document::from_base_raw(base_rc);
+                        doc.dispatch_image_status(
+                            event.target,
+                            if matches!(&event.data, DomEventData::Load) {
+                                crate::dom::observer::ImageLoadStatus::Loaded
                             } else {
-                                1
-                            };
-                            st.last_mousedown_time = Some(std::time::Instant::now());
-                            st.mousedown_pos = (x, y);
-                            st.armed_pointer_click = true;
-                            st.armed_key_click = false;
-                            st.armed_label_click = false;
+                                crate::dom::observer::ImageLoadStatus::Error
+                            },
+                        );
+                    }
+                    return;
+                }
+
+                if let DomEventData::Scroll(_) = &event.data {
+                    if let Some(base_rc) = weak_base.upgrade() {
+                        if base_rc.try_borrow().is_err() {
+                            let element_id = base_doc
+                                .get_node(event.target)
+                                .and_then(|n| n.element_data())
+                                .and_then(|el| el.id.as_ref())
+                                .map(|id| id.to_string());
+                            CURRENT_OBSERVERS.with(|cell| {
+                                if let Ok(mut reg) = cell.try_borrow_mut() {
+                                    reg.pending_scroll_dispatch = true;
+                                    if let Some(id) = element_id
+                                        && !reg.pending_element_scroll_ids.contains(&id)
+                                    {
+                                        reg.pending_element_scroll_ids.push(id);
+                                    }
+                                }
+                            });
+                            crate::frame::native::request_host_redraw();
                         } else {
-                            st.armed_pointer_click = false;
-                            st.armed_label_click = false;
+                            let doc = Document::from_base_raw(base_rc);
+                            if let Some(node) = base_doc.get_node(event.target)
+                                && let Some(el) = node.element_data()
+                                && let Some(id) = &el.id
+                            {
+                                doc.dispatch_element_scroll(id);
+                            }
+                            doc.dispatch_scroll();
                         }
                     }
-                    Some(crate::dom::observer::CaptureEventKind::PointerDown {
-                        pointer_type,
-                        client_x: pe.client_x() as f64,
-                        client_y: pe.client_y() as f64,
-                    })
+                    return;
                 }
-                DomEventData::Click(pe) => {
-                    let hit_label = chain.iter().any(|&nid| {
-                        base_doc
-                            .get_node(nid)
-                            .and_then(|n| n.element_data())
-                            .is_some_and(|el| el.name.local == blitz_dom::local_name!("label"))
-                    });
-                    let (is_trusted, detail, allow_reset) =
-                        if let Ok(mut st) = click_state.try_borrow_mut() {
-                            if st.armed_pointer_click {
-                                st.armed_pointer_click = false;
-                                st.armed_key_click = false;
-                                st.armed_label_click = hit_label;
-                                (true, st.click_count.max(1), true)
-                            } else if st.armed_key_click {
-                                st.armed_key_click = false;
-                                st.armed_label_click = false;
-                                (true, 0, true)
-                            } else if st.armed_label_click {
-                                st.armed_label_click = false;
-                                (false, 0, true)
-                            } else {
-                                (false, 0, false)
-                            }
-                        } else {
-                            (true, 1, true)
-                        };
-                    if allow_reset {
-                        pending_reset_form_nid =
-                            resolve_reset_button_form_node_id(base_doc, chain);
+
+                if let DomEventData::PointerMove(pe) = &event.data {
+                    if let Some(base_rc) = weak_base.upgrade() {
+                        let doc = Document::from_base_raw(base_rc);
+                        doc.dispatch_pointer_move(pe.client_x() as f64, pe.client_y() as f64);
                     }
-                    Some(crate::dom::observer::CaptureEventKind::Click {
-                        is_trusted,
-                        detail,
-                        client_x: pe.client_x() as f64,
-                        client_y: pe.client_y() as f64,
-                    })
+                    return;
                 }
-                DomEventData::FocusIn(_) => {
-                    if base_doc.try_root_element().map(|el| el.id) == Some(event.target) {
-                        None
-                    } else {
-                        Some(crate::dom::observer::CaptureEventKind::FocusIn)
+
+                if let DomEventData::PointerCancel(_) = &event.data {
+                    if let Ok(mut st) = click_state.try_borrow_mut() {
+                        st.armed_pointer_click = false;
                     }
+                    return;
                 }
-                DomEventData::KeyDown(key_event) => {
-                    use dioxus::prelude::keyboard_types::{Key, NamedKey};
-                    if matches!(&key_event.key, Key::Named(NamedKey::Enter))
+
+                if let DomEventData::KeyUp(key_event) = &event.data {
+                    use dioxus::prelude::keyboard_types::Key;
+                    if matches!(&key_event.key, Key::Character(s) if s == " ")
                         && let Ok(mut st) = click_state.try_borrow_mut()
                     {
                         st.armed_key_click = true;
                     }
-                    let key = match &key_event.key {
-                        Key::Named(NamedKey::Escape) => "Escape".to_string(),
-                        Key::Named(named) => format!("{named:?}"),
-                        Key::Character(s) => s.clone(),
-                    };
-                    Some(crate::dom::observer::CaptureEventKind::KeyDown { key })
+                    return;
                 }
-                _ => None,
-            }) else {
-                return;
-            };
 
-            let mut path_ids = Vec::with_capacity(chain.len());
-            for &nid in chain {
-                if let Some(node) = base_doc.get_node(nid)
-                    && let Some(el) = node.element_data()
-                    && let Some(id) = &el.id
-                {
-                    path_ids.push(id.to_string());
-                }
-            }
+                let mut pending_reset_form_nid: Option<blitz_dom::NodeId> = None;
 
-            if let Some(base_rc) = weak_base.upgrade() {
-                let doc = Document::from_base_raw(base_rc);
-                doc.dispatch_capture_event_with_path(kind, event.target, path_ids);
-                if let Some(form_nid) = pending_reset_form_nid {
-                    dispatch_form_reset_with_base_ref(base_doc, None, Some(form_nid));
+                let Some(kind) = (match &event.data {
+                    DomEventData::PointerDown(pe) => {
+                        let pointer_type = match pe.id {
+                            blitz_traits::events::BlitzPointerId::Mouse => "mouse".to_string(),
+                            blitz_traits::events::BlitzPointerId::Pen => "pen".to_string(),
+                            blitz_traits::events::BlitzPointerId::Finger(_) => "touch".to_string(),
+                        };
+                        if let Ok(mut st) = click_state.try_borrow_mut() {
+                            if pe.button == blitz_traits::events::MouseEventButton::Main {
+                                let (x, y) = (pe.page_x(), pe.page_y());
+                                st.click_count = if st.last_mousedown_time.is_some_and(|t| {
+                                    t.elapsed() < std::time::Duration::from_millis(500)
+                                }) && (st.mousedown_pos.0 - x).abs() <= 2.0
+                                    && (st.mousedown_pos.1 - y).abs() <= 2.0
+                                {
+                                    st.click_count.saturating_add(1)
+                                } else {
+                                    1
+                                };
+                                st.last_mousedown_time = Some(std::time::Instant::now());
+                                st.mousedown_pos = (x, y);
+                                st.armed_pointer_click = true;
+                                st.armed_key_click = false;
+                                st.armed_label_click = false;
+                            } else {
+                                st.armed_pointer_click = false;
+                                st.armed_label_click = false;
+                            }
+                        }
+                        Some(crate::dom::observer::CaptureEventKind::PointerDown {
+                            pointer_type,
+                            client_x: pe.client_x() as f64,
+                            client_y: pe.client_y() as f64,
+                        })
+                    }
+                    DomEventData::Click(pe) => {
+                        let hit_label = chain.iter().any(|&nid| {
+                            base_doc
+                                .get_node(nid)
+                                .and_then(|n| n.element_data())
+                                .is_some_and(|el| el.name.local == blitz_dom::local_name!("label"))
+                        });
+                        let (is_trusted, detail, allow_reset) =
+                            if let Ok(mut st) = click_state.try_borrow_mut() {
+                                if st.armed_pointer_click {
+                                    st.armed_pointer_click = false;
+                                    st.armed_key_click = false;
+                                    st.armed_label_click = hit_label;
+                                    (true, st.click_count.max(1), true)
+                                } else if st.armed_key_click {
+                                    st.armed_key_click = false;
+                                    st.armed_label_click = false;
+                                    (true, 0, true)
+                                } else if st.armed_label_click {
+                                    st.armed_label_click = false;
+                                    (false, 0, true)
+                                } else {
+                                    (false, 0, false)
+                                }
+                            } else {
+                                (true, 1, true)
+                            };
+                        if allow_reset {
+                            pending_reset_form_nid =
+                                resolve_reset_button_form_node_id(base_doc, chain);
+                        }
+                        Some(crate::dom::observer::CaptureEventKind::Click {
+                            is_trusted,
+                            detail,
+                            client_x: pe.client_x() as f64,
+                            client_y: pe.client_y() as f64,
+                        })
+                    }
+                    DomEventData::FocusIn(_) => {
+                        if base_doc.try_root_element().map(|el| el.id) == Some(event.target) {
+                            None
+                        } else {
+                            Some(crate::dom::observer::CaptureEventKind::FocusIn)
+                        }
+                    }
+                    DomEventData::KeyDown(key_event) => {
+                        use dioxus::prelude::keyboard_types::{Key, NamedKey};
+                        if matches!(&key_event.key, Key::Named(NamedKey::Enter))
+                            && let Ok(mut st) = click_state.try_borrow_mut()
+                        {
+                            st.armed_key_click = true;
+                        }
+                        let key = match &key_event.key {
+                            Key::Named(NamedKey::Escape) => "Escape".to_string(),
+                            Key::Named(named) => format!("{named:?}"),
+                            Key::Character(s) => s.clone(),
+                        };
+                        Some(crate::dom::observer::CaptureEventKind::KeyDown { key })
+                    }
+                    _ => None,
+                }) else {
+                    return;
+                };
+
+                let mut path_ids = Vec::with_capacity(chain.len());
+                for &nid in chain {
+                    if let Some(node) = base_doc.get_node(nid)
+                        && let Some(el) = node.element_data()
+                        && let Some(id) = &el.id
+                    {
+                        path_ids.push(id.to_string());
+                    }
                 }
-            }
-        })));
+
+                if let Some(base_rc) = weak_base.upgrade() {
+                    let doc = Document::from_base_raw(base_rc);
+                    doc.dispatch_capture_event_with_path(kind, event.target, path_ids);
+                    if let Some(form_nid) = pending_reset_form_nid {
+                        dispatch_form_reset_with_base_ref(base_doc, None, Some(form_nid));
+                    }
+                }
+            })));
     }
 
     /// Binds a live window `BaseDocument` to this document handle in-place.
@@ -355,7 +388,8 @@ impl Document {
 
     /// Access the underlying real `BaseDocument`.
     pub fn base(&self) -> Rc<RefCell<BaseDocument>> {
-        self.get_base().expect("Document has no active BaseDocument")
+        self.get_base()
+            .expect("Document has no active BaseDocument")
     }
 
     /// Extracts the underlying `Rc<RefCell<BaseDocument>>` from a `dioxus_native::NodeHandle`.
@@ -393,20 +427,14 @@ impl Document {
         let borrowed = base.try_borrow().ok()?;
         let node_id = lookup_node_id(&borrowed, id)?;
         drop(borrowed);
-        Some(crate::dom::element::Element::from_native(
-            base,
-            node_id,
-        ))
+        Some(crate::dom::element::Element::from_native(base, node_id))
     }
 
     /// Returns the element that currently holds active keyboard focus in the document.
     pub fn active_element(&self) -> Option<crate::dom::element::Element> {
         let base = self.get_base()?;
         let node_id = base.try_borrow().ok()?.active_focus_node_id()?;
-        Some(crate::dom::element::Element::from_native(
-            base,
-            node_id,
-        ))
+        Some(crate::dom::element::Element::from_native(base, node_id))
     }
 
     /// Returns the Window handle associated with this document.
@@ -433,7 +461,10 @@ impl Document {
         };
         let vp = base.viewport();
         let scale = (vp.hidpi_scale * vp.zoom).max(0.001) as f64;
-        (vp.window_size.0 as f64 / scale, vp.window_size.1 as f64 / scale)
+        (
+            vp.window_size.0 as f64 / scale,
+            vp.window_size.1 as f64 / scale,
+        )
     }
 
     /// Queries the live viewport scroll offset (x, y) directly from the Blitz document.
@@ -520,8 +551,41 @@ impl Document {
         Some(crate::runtime::geometry::Rect::new(x, y, width, height))
     }
 
+    /// Measures the bounding rectangle of an element by ID, adjusting for the specified box model.
+    pub fn measure_rect_with_box(
+        &self,
+        element_id: &str,
+        box_model: crate::dom::observer::ResizeObserverBox,
+    ) -> Option<crate::runtime::geometry::Rect> {
+        let border_rect = self.measure_rect(element_id)?;
+        match box_model {
+            crate::dom::observer::ResizeObserverBox::BorderBox => Some(border_rect),
+            crate::dom::observer::ResizeObserverBox::ContentBox => {
+                let base_rc = self.get_base()?;
+                let Ok(base) = base_rc.try_borrow() else {
+                    return Some(border_rect);
+                };
+                let node_id = lookup_node_id(&base, element_id)?;
+                let node = base.get_node(node_id)?;
+                let layout = node.final_layout();
+                let border_x = (layout.border.left + layout.border.right) as f64;
+                let border_y = (layout.border.top + layout.border.bottom) as f64;
+                let padding_x = (layout.padding.left + layout.padding.right) as f64;
+                let padding_y = (layout.padding.top + layout.padding.bottom) as f64;
+                let w = (border_rect.width - border_x - padding_x).max(0.0);
+                let h = (border_rect.height - border_y - padding_y).max(0.0);
+                let x = border_rect.x + (layout.border.left + layout.padding.left) as f64;
+                let y = border_rect.y + (layout.border.top + layout.padding.top) as f64;
+                Some(crate::runtime::geometry::Rect::new(x, y, w, h))
+            }
+        }
+    }
+
     /// Measures the pre-transform bounding rectangle of an element by ID (`final_layout().size` in Blitz is already unscaled).
-    pub fn measure_unscaled_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
+    pub fn measure_unscaled_rect(
+        &self,
+        element_id: &str,
+    ) -> Option<crate::runtime::geometry::Rect> {
         self.measure_rect(element_id)
     }
 
@@ -574,7 +638,7 @@ impl Document {
             None
         };
 
-        let now = crate::frame::native::current_time_secs();
+        let now = base.last_animation_time();
 
         if let Some(ref saved_block) = prev_direct_style_block {
             base.set_style_property(node_id, "transition", "none");
@@ -601,7 +665,7 @@ impl Document {
                 }
                 node.set_restyle_hint(blitz_dom::RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
             }
-            base.pending_animation_events.truncate(prev_anim_len);
+            prune_measurement_animation_events(&mut base, prev_anim_len, node_id);
             return (measured > 0.0).then_some(measured);
         }
 
@@ -647,15 +711,160 @@ impl Document {
                 base.mutate().clear_attribute(node_id, style_qname);
             }
         }
-        base.pending_animation_events.truncate(prev_anim_len);
+        prune_measurement_animation_events(&mut base, prev_anim_len, node_id);
 
         (measured > 0.0).then_some(measured)
+    }
+
+    /// Measures the unscaled natural border-box dimensions (width, height) without animation or transition constraints.
+    pub fn measure_without_animation(&self, element_id: &str) -> Option<(f64, f64)> {
+        let base_rc = self.get_base()?;
+        let (node_id, contended_fallback) = {
+            let Ok(base) = base_rc.try_borrow() else {
+                return None;
+            };
+            let node_id = lookup_node_id(&base, element_id)?;
+            let node = base.get_node(node_id)?;
+            let current_w = node.unrounded_layout().size.width as f64;
+            let current_h = node.unrounded_layout().size.height as f64;
+            (
+                node_id,
+                (current_w > 0.0 || current_h > 0.0).then_some((current_w, current_h)),
+            )
+        };
+
+        let Ok(mut base) = base_rc.try_borrow_mut() else {
+            return contended_fallback;
+        };
+        if base.get_node(node_id).is_none() {
+            return None;
+        }
+
+        let prev_anim_len = base.pending_animation_events.len();
+        let prev_style_attr = base.get_node(node_id).and_then(|n| {
+            n.element_data().and_then(|el| {
+                el.attrs
+                    .iter()
+                    .find(|a| a.name.local == blitz_dom::local_name!("style"))
+                    .map(|a| (a.name.clone(), a.value.clone()))
+            })
+        });
+        let prev_direct_style_block = if prev_style_attr.is_none() {
+            base.get_node(node_id).and_then(|n| {
+                let block = n.element_data()?.style_attribute.clone()?;
+                block
+                    .read_with(&n.guard().read())
+                    .immutable
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Some(block)
+            })
+        } else {
+            None
+        };
+
+        let had_active =
+            base.node_has_active_animations(node_id) || base.node_has_active_transitions(node_id);
+        let now = base.last_animation_time();
+
+        if let Some(ref saved_block) = prev_direct_style_block {
+            base.set_style_property(node_id, "transition", "none");
+            base.set_style_property(node_id, "animation", "none");
+            base.resolve(now);
+            if had_active {
+                if let Some(node) = base.get_node_mut(node_id) {
+                    node.set_restyle_hint(blitz_dom::RestyleHint::RESTYLE_SELF);
+                }
+                base.resolve(now);
+            }
+
+            let measured = base
+                .get_node(node_id)
+                .map(|n| {
+                    let s = n.unrounded_layout().size;
+                    (s.width as f64, s.height as f64)
+                })
+                .unwrap_or((0.0, 0.0));
+
+            if let Some(node) = base.get_node_mut(node_id) {
+                if let Some(el) = node.element_data_mut() {
+                    el.style_attribute = Some(saved_block.clone());
+                }
+                node.set_restyle_hint(blitz_dom::RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
+            }
+            prune_measurement_animation_events(&mut base, prev_anim_len, node_id);
+            return (measured.0 > 0.0 || measured.1 > 0.0).then_some(measured);
+        }
+
+        let style_qname = prev_style_attr
+            .as_ref()
+            .map(|(q, _)| q.clone())
+            .unwrap_or_else(|| {
+                blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("style"))
+            });
+        let prev_css = prev_style_attr
+            .as_ref()
+            .map(|(_, v)| v.trim().trim_end_matches(';'))
+            .unwrap_or("");
+
+        let no_anim_css = if prev_css.is_empty() {
+            "transition: none; animation: none;".to_string()
+        } else {
+            format!("{prev_css}; transition: none; animation: none;")
+        };
+        base.mutate()
+            .set_attribute(node_id, style_qname.clone(), &no_anim_css);
+        base.resolve(now);
+        if had_active {
+            if let Some(node) = base.get_node_mut(node_id) {
+                node.set_restyle_hint(blitz_dom::RestyleHint::RESTYLE_SELF);
+            }
+            base.resolve(now);
+        }
+
+        let measured = base
+            .get_node(node_id)
+            .map(|n| {
+                let s = n.unrounded_layout().size;
+                (s.width as f64, s.height as f64)
+            })
+            .unwrap_or((0.0, 0.0));
+
+        match prev_style_attr {
+            Some((qname, exact_val)) => {
+                base.mutate().set_attribute(node_id, qname, &exact_val);
+            }
+            None => {
+                base.mutate().clear_attribute(node_id, style_qname);
+            }
+        }
+        prune_measurement_animation_events(&mut base, prev_anim_len, node_id);
+
+        (measured.0 > 0.0 || measured.1 > 0.0).then_some(measured)
+    }
+
+    /// Returns `true` when the element currently has a running or pending CSS animation or transition.
+    pub fn is_element_animating(&self, element_id: &str) -> bool {
+        let Some(base_rc) = self.get_base() else {
+            return false;
+        };
+        let Ok(base) = base_rc.try_borrow() else {
+            return false;
+        };
+        let Some(node_id) = lookup_node_id(&base, element_id) else {
+            return false;
+        };
+        base.node_has_active_animations(node_id) || base.node_has_active_transitions(node_id)
     }
 
     /// Queries the first element in the document matching the given CSS selector.
     pub fn query_selector(&self, selector: &str) -> Option<crate::dom::element::Element> {
         let base = self.get_base()?;
-        let node_id = base.try_borrow().ok()?.query_selector(selector).ok().flatten()?;
+        let node_id = base
+            .try_borrow()
+            .ok()?
+            .query_selector(selector)
+            .ok()
+            .flatten()?;
         Some(crate::dom::element::Element::from_native(base, node_id))
     }
 
@@ -670,15 +879,20 @@ impl Document {
         element_id: &str,
         options: crate::dom::element::FocusOptions,
     ) -> Result<(), crate::error::HostError> {
-        let base = self
-            .get_base()
-            .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
+        let base = self.get_base().ok_or_else(|| {
+            crate::error::HostError::Unsupported("No active native document".into())
+        })?;
         let Ok(mut base_mut) = base.try_borrow_mut() else {
             return Ok(());
         };
         let node_id = base_mut
             .get_element_by_id(element_id)
-            .or_else(|| base_mut.query_selector(&format!("#{element_id}")).ok().flatten())
+            .or_else(|| {
+                base_mut
+                    .query_selector(&format!("#{element_id}"))
+                    .ok()
+                    .flatten()
+            })
             .ok_or_else(|| crate::error::HostError::ElementNotFound(element_id.to_string()))?;
         base_mut.set_focus_to_with_options(
             node_id,
@@ -763,7 +977,10 @@ impl Document {
             let Ok(reg) = cell.try_borrow() else {
                 return Vec::new();
             };
-            reg.visibility_observers.values().cloned().collect::<Vec<_>>()
+            reg.visibility_observers
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
         });
         for handle in handles {
             if let Ok(mut cb) = handle.try_borrow_mut() {
@@ -813,7 +1030,8 @@ impl Document {
             base.borrow_mut().resolve(current_time_for_animations);
             self.sync_animation_observers(prev_len);
             self.finish_resolved_transition_observers();
-            self.last_synced_len.set(base.borrow().pending_animation_events.len());
+            self.last_synced_len
+                .set(base.borrow().pending_animation_events.len());
             self.notify_layout_observers();
         }
     }
@@ -841,10 +1059,18 @@ impl Document {
         let mut dispatches = Vec::new();
         for queued in events {
             let event_match = match &queued.event {
-                DomEventData::AnimationEnd(anim) => Some(EventKind::AnimationEnd(anim.animation_name.clone())),
-                DomEventData::AnimationCancel(anim) => Some(EventKind::AnimationCancel(anim.animation_name.clone())),
-                DomEventData::TransitionEnd(trans) => Some(EventKind::TransitionEnd(trans.property_name.clone())),
-                DomEventData::TransitionCancel(trans) => Some(EventKind::TransitionCancel(trans.property_name.clone())),
+                DomEventData::AnimationEnd(anim) => {
+                    Some(EventKind::AnimationEnd(anim.animation_name.clone()))
+                }
+                DomEventData::AnimationCancel(anim) => {
+                    Some(EventKind::AnimationCancel(anim.animation_name.clone()))
+                }
+                DomEventData::TransitionEnd(trans) => {
+                    Some(EventKind::TransitionEnd(trans.property_name.clone()))
+                }
+                DomEventData::TransitionCancel(trans) => {
+                    Some(EventKind::TransitionCancel(trans.property_name.clone()))
+                }
                 _ => None,
             };
 
@@ -852,7 +1078,10 @@ impl Document {
                 let element_id = b.get_node(queued.node_id).and_then(|node| {
                     node.element_data()
                         .and_then(|el| el.id.as_deref().map(|s| s.to_string()))
-                        .or_else(|| node.attr(blitz_dom::local_name!("id")).map(|s| s.to_string()))
+                        .or_else(|| {
+                            node.attr(blitz_dom::local_name!("id"))
+                                .map(|s| s.to_string())
+                        })
                 });
                 if let Some(id) = element_id {
                     dispatches.push((id, kind));
@@ -864,9 +1093,13 @@ impl Document {
         for (element_id, kind) in dispatches {
             match kind {
                 EventKind::AnimationEnd(name) => self.dispatch_animation_end(&element_id, &name),
-                EventKind::AnimationCancel(name) => self.dispatch_animation_cancel(&element_id, &name),
+                EventKind::AnimationCancel(name) => {
+                    self.dispatch_animation_cancel(&element_id, &name)
+                }
                 EventKind::TransitionEnd(prop) => self.dispatch_transition_end(&element_id, &prop),
-                EventKind::TransitionCancel(prop) => self.dispatch_transition_cancel(&element_id, &prop),
+                EventKind::TransitionCancel(prop) => {
+                    self.dispatch_transition_cancel(&element_id, &prop)
+                }
             }
         }
     }
@@ -876,7 +1109,8 @@ impl Document {
         self.sync_animation_observers(0);
         self.finish_resolved_transition_observers();
         if let Some(base) = self.get_base() {
-            self.last_synced_len.set(base.borrow().pending_animation_events.len());
+            self.last_synced_len
+                .set(base.borrow().pending_animation_events.len());
         }
     }
 
@@ -898,7 +1132,28 @@ impl Document {
             self.last_synced_len.set(cur_len);
         }
         self.finish_resolved_transition_observers();
+        self.flush_deferred_scroll_observers();
         self.notify_layout_observers();
+    }
+
+    fn flush_deferred_scroll_observers(&self) {
+        if !self.get_base().is_some_and(|b| b.try_borrow().is_ok()) {
+            return;
+        }
+        let (pending_scroll, pending_ids) = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(mut reg) = cell.try_borrow_mut() else {
+                return (false, Vec::new());
+            };
+            let pending_scroll = std::mem::take(&mut reg.pending_scroll_dispatch);
+            let pending_ids = std::mem::take(&mut reg.pending_element_scroll_ids);
+            (pending_scroll, pending_ids)
+        });
+        for id in pending_ids {
+            self.dispatch_element_scroll(&id);
+        }
+        if pending_scroll {
+            self.dispatch_scroll();
+        }
     }
 
     fn sync_image_observers(&self) {
@@ -967,9 +1222,10 @@ impl Document {
                 .filter(|observer| {
                     observer.node_id == node_id
                         && observer.status == crate::dom::observer::ImageLoadStatus::Loading
-                        && observer.base.upgrade().is_some_and(|observer_base| {
-                            Rc::as_ptr(&observer_base) == base_ptr
-                        })
+                        && observer
+                            .base
+                            .upgrade()
+                            .is_some_and(|observer_base| Rc::as_ptr(&observer_base) == base_ptr)
                 })
                 .map(|observer| {
                     observer.status = status;
@@ -994,43 +1250,47 @@ impl Document {
             let Ok(base) = base.try_borrow() else {
                 return;
             };
-            let targets = CURRENT_OBSERVERS.with(|cell| {
+            let current_gen = base.resolve_generation();
+            let entries = CURRENT_OBSERVERS.with(|cell| {
                 let Ok(reg) = cell.try_borrow() else {
                     return Vec::new();
                 };
                 reg.transition_observers
-                    .values()
-                    .map(|entry| entry.target_id.clone())
+                    .iter()
+                    .map(|(&sub_id, entry)| {
+                        (sub_id, entry.target_id.clone(), entry.registered_generation)
+                    })
                     .collect::<Vec<_>>()
             });
             let mut events = Vec::new();
-            for target_id in targets {
+            for (sub_id, target_id, registered_generation) in entries {
                 let event = match base.get_element_by_id(&target_id) {
                     None => Some(crate::dom::observer::TransitionLifecycleEvent::Missing),
-                    Some(node_id) => {
-                        match base.node_or_ancestor_has_display_none(node_id) {
-                            Some(true) => {
-                                Some(crate::dom::observer::TransitionLifecycleEvent::Hidden)
-                            }
-                            Some(false)
-                                if !base.node_has_active_animations(node_id)
-                                    && !base.node_has_active_transitions(node_id) =>
-                            {
-                                Some(crate::dom::observer::TransitionLifecycleEvent::NoAnimation)
-                            }
-                            Some(false) | None => None,
+                    Some(node_id) => match base.node_or_ancestor_has_display_none(node_id) {
+                        Some(true) => Some(crate::dom::observer::TransitionLifecycleEvent::Hidden),
+                        Some(false)
+                            if current_gen > registered_generation
+                                && !base.node_has_active_animations(node_id)
+                                && !base.node_has_active_transitions(node_id) =>
+                        {
+                            Some(crate::dom::observer::TransitionLifecycleEvent::NoAnimation)
                         }
-                    }
+                        Some(false) | None => None,
+                    },
                 };
                 if let Some(event) = event {
-                    events.push((target_id, event));
+                    events.push((sub_id, event));
                 }
             }
             drop(base);
-            for (target_id, event) in events {
-                let observers = take_transition_observers(&target_id);
-                for mut observer in observers {
-                    (observer.callback)(event.clone());
+            for (sub_id, event) in events {
+                let observer = CURRENT_OBSERVERS.with(|cell| {
+                    cell.try_borrow_mut()
+                        .ok()
+                        .and_then(|mut reg| reg.transition_observers.remove(&sub_id))
+                });
+                if let Some(mut observer) = observer {
+                    (observer.callback)(event);
                 }
             }
             return;
@@ -1069,7 +1329,7 @@ impl Document {
                 };
                 let mut pending = Vec::new();
                 for obs in reg.resize_observers.values_mut() {
-                    if let Some(rect) = self.measure_rect(&obs.target_id) {
+                    if let Some(rect) = self.measure_rect_with_box(&obs.target_id, obs.box_model) {
                         let changed = if let Some(last) = &obs.last_rect {
                             (last.width - rect.width).abs() > 0.001
                                 || (last.height - rect.height).abs() > 0.001
@@ -1114,9 +1374,10 @@ impl Document {
         for &nid in &chain {
             if let Some(node) = base.get_node(nid)
                 && let Some(el) = node.element_data()
-                    && let Some(id) = &el.id {
-                        path_ids.push(id.to_string());
-                    }
+                && let Some(id) = &el.id
+            {
+                path_ids.push(id.to_string());
+            }
         }
         path_ids
     }
@@ -1161,9 +1422,11 @@ impl Document {
     pub fn dispatch_animation_end(&self, element_id: &str, animation_name: &str) {
         let observers = take_transition_observers(element_id);
         for mut obs in observers {
-            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::AnimationEnd {
-                animation_name: animation_name.to_string(),
-            });
+            (obs.callback)(
+                crate::dom::observer::TransitionLifecycleEvent::AnimationEnd {
+                    animation_name: animation_name.to_string(),
+                },
+            );
         }
     }
 
@@ -1171,9 +1434,11 @@ impl Document {
     pub fn dispatch_animation_cancel(&self, element_id: &str, animation_name: &str) {
         let observers = take_transition_observers(element_id);
         for mut obs in observers {
-            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::AnimationCancel {
-                animation_name: animation_name.to_string(),
-            });
+            (obs.callback)(
+                crate::dom::observer::TransitionLifecycleEvent::AnimationCancel {
+                    animation_name: animation_name.to_string(),
+                },
+            );
         }
     }
 
@@ -1181,9 +1446,11 @@ impl Document {
     pub fn dispatch_transition_end(&self, element_id: &str, property_name: &str) {
         let observers = take_transition_observers(element_id);
         for mut obs in observers {
-            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TransitionEnd {
-                property_name: property_name.to_string(),
-            });
+            (obs.callback)(
+                crate::dom::observer::TransitionLifecycleEvent::TransitionEnd {
+                    property_name: property_name.to_string(),
+                },
+            );
         }
     }
 
@@ -1191,9 +1458,11 @@ impl Document {
     pub fn dispatch_transition_cancel(&self, element_id: &str, property_name: &str) {
         let observers = take_transition_observers(element_id);
         for mut obs in observers {
-            (obs.callback)(crate::dom::observer::TransitionLifecycleEvent::TransitionCancel {
-                property_name: property_name.to_string(),
-            });
+            (obs.callback)(
+                crate::dom::observer::TransitionLifecycleEvent::TransitionCancel {
+                    property_name: property_name.to_string(),
+                },
+            );
         }
     }
 
@@ -1213,14 +1482,14 @@ impl Document {
         let Ok(base_ref) = base.try_borrow() else {
             return;
         };
-        let form_node_id = base_ref
-            .get_element_by_id(form_element_id)
-            .or_else(|| base_ref.query_selector(&format!("#{form_element_id}")).ok().flatten());
-        let handles = collect_matching_form_reset_callbacks(
-            &base_ref,
-            Some(form_element_id),
-            form_node_id,
-        );
+        let form_node_id = base_ref.get_element_by_id(form_element_id).or_else(|| {
+            base_ref
+                .query_selector(&format!("#{form_element_id}"))
+                .ok()
+                .flatten()
+        });
+        let handles =
+            collect_matching_form_reset_callbacks(&base_ref, Some(form_element_id), form_node_id);
         drop(base_ref);
         invoke_form_reset_callbacks(handles);
     }
@@ -1245,7 +1514,10 @@ impl Document {
             let Ok(reg) = cell.try_borrow() else {
                 return Vec::new();
             };
-            reg.pointer_move_observers.values().cloned().collect::<Vec<_>>()
+            reg.pointer_move_observers
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
         });
         for handle in handles {
             if let Ok(mut cb) = handle.try_borrow_mut() {
@@ -1277,7 +1549,12 @@ impl Document {
             };
             reg.element_scroll_observers
                 .get(element_id)
-                .map(|observers| observers.iter().map(|(_, cb)| cb.clone()).collect::<Vec<_>>())
+                .map(|observers| {
+                    observers
+                        .iter()
+                        .map(|(_, cb)| cb.clone())
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default()
         });
         for handle in handles {
@@ -1297,11 +1574,12 @@ impl Document {
         };
         if let Some(node) = b.get_node(node_id)
             && let Some(el) = node.element_data()
-                && let Some(id) = &el.id {
-                    let id_str = id.to_string();
-                    drop(b);
-                    self.dispatch_element_scroll(&id_str);
-                }
+            && let Some(id) = &el.id
+        {
+            let id_str = id.to_string();
+            drop(b);
+            self.dispatch_element_scroll(&id_str);
+        }
     }
 
     /// Queries the descendant tree order of elements matching `candidate_ids` within `root_id`.
@@ -1313,9 +1591,9 @@ impl Document {
         root_id: &str,
         candidate_ids: &[&str],
     ) -> Result<Vec<String>, crate::error::HostError> {
-        let base_rc = self
-            .get_base()
-            .ok_or_else(|| crate::error::HostError::Unsupported("No active native document".into()))?;
+        let base_rc = self.get_base().ok_or_else(|| {
+            crate::error::HostError::Unsupported("No active native document".into())
+        })?;
         let base = base_rc.borrow();
         let root_node_id = base
             .get_element_by_id(root_id)
@@ -1341,12 +1619,13 @@ impl Document {
             if let Some(node) = base.get_node(current_id) {
                 if let Some(el) = node.element_data()
                     && let Some(id) = el.id.as_deref()
-                        && candidate_set.remove(id) {
-                            ordered_ids.push(id.to_string());
-                            if candidate_set.is_empty() {
-                                break;
-                            }
-                        }
+                    && candidate_set.remove(id)
+                {
+                    ordered_ids.push(id.to_string());
+                    if candidate_set.is_empty() {
+                        break;
+                    }
+                }
                 for &child_id in node.children.iter().rev() {
                     stack.push(child_id);
                 }
@@ -1382,7 +1661,11 @@ impl Document {
         let base = base_rc.borrow();
         let form_node_id = base
             .get_element_by_id(form_element_id)
-            .or_else(|| base.query_selector(&format!("#{form_element_id}")).ok().flatten())
+            .or_else(|| {
+                base.query_selector(&format!("#{form_element_id}"))
+                    .ok()
+                    .flatten()
+            })
             .ok_or_else(|| crate::error::HostError::ElementNotFound(form_element_id.to_string()))?;
 
         let is_form = base
@@ -1469,7 +1752,9 @@ impl Document {
                 if !is_checked {
                     continue;
                 }
-                let value = element.attr(blitz_dom::local_name!("value")).unwrap_or("on");
+                let value = element
+                    .attr(blitz_dom::local_name!("value"))
+                    .unwrap_or("on");
                 entries.push((name.to_string(), value.to_string()));
                 continue;
             }
@@ -1513,7 +1798,10 @@ fn collect_matching_form_reset_callbacks(
             base_ref.get_node(fnid).and_then(|node| {
                 node.element_data()
                     .and_then(|el| el.id.as_deref().map(ToString::to_string))
-                    .or_else(|| node.attr(blitz_dom::local_name!("id")).map(ToString::to_string))
+                    .or_else(|| {
+                        node.attr(blitz_dom::local_name!("id"))
+                            .map(ToString::to_string)
+                    })
                     .filter(|id| !id.is_empty())
             })
         })
@@ -1619,9 +1907,7 @@ fn resolve_reset_button_form_node_id(
         let tag: &str = &el.name.local;
         if tag == "button" || tag == "input" {
             let input_type = el.attr(blitz_dom::local_name!("type"));
-            if tag == "input"
-                && input_type.is_some_and(|t| t.eq_ignore_ascii_case("hidden"))
-            {
+            if tag == "input" && input_type.is_some_and(|t| t.eq_ignore_ascii_case("hidden")) {
                 continue;
             }
             if !input_type.is_some_and(|t| t.eq_ignore_ascii_case("reset")) {
@@ -1636,14 +1922,12 @@ fn resolve_reset_button_form_node_id(
                 if explicit_fid.is_empty() {
                     return None;
                 }
-                return base_doc
-                    .get_element_by_id(explicit_fid)
-                    .filter(|&fnid| {
-                        base_doc
-                            .get_node(fnid)
-                            .and_then(|n| n.element_data())
-                            .is_some_and(|fe| fe.name.local == blitz_dom::local_name!("form"))
-                    });
+                return base_doc.get_element_by_id(explicit_fid).filter(|&fnid| {
+                    base_doc
+                        .get_node(fnid)
+                        .and_then(|n| n.element_data())
+                        .is_some_and(|fe| fe.name.local == blitz_dom::local_name!("form"))
+                });
             }
             return nearest_form_ancestor(base_doc, nid);
         }
@@ -1666,12 +1950,14 @@ std::thread_local! {
 
 struct ResizeObserverEntry {
     target_id: String,
+    box_model: crate::dom::observer::ResizeObserverBox,
     last_rect: Option<crate::runtime::geometry::Rect>,
     callback: Rc<RefCell<Box<dyn FnMut(crate::dom::observer::ResizeEntry)>>>,
 }
 
 struct TransitionObserverEntry {
     target_id: String,
+    registered_generation: u64,
     callback: Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent)>,
 }
 
@@ -1691,13 +1977,22 @@ struct ImageObserverEntry {
 #[derive(Default)]
 struct NativeObserverRegistry {
     resize_observers: std::collections::HashMap<u64, ResizeObserverEntry>,
-    capture_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>>>,
+    capture_observers: std::collections::HashMap<
+        u64,
+        Rc<RefCell<Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>>,
+    >,
     pointer_move_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(f64, f64)>>>>,
     transition_observers: std::collections::HashMap<u64, TransitionObserverEntry>,
     form_reset_observers: std::collections::HashMap<u64, FormResetObserverEntry>,
     scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
-    element_scroll_observers: std::collections::HashMap<String, Vec<(u64, Rc<RefCell<Box<dyn FnMut()>>>)>>,
-    visibility_observers: std::collections::BTreeMap<u64, Rc<RefCell<Box<dyn FnMut(crate::dom::observer::DocumentVisibility)>>>>,
+    element_scroll_observers:
+        std::collections::HashMap<String, Vec<(u64, Rc<RefCell<Box<dyn FnMut()>>>)>>,
+    pending_scroll_dispatch: bool,
+    pending_element_scroll_ids: Vec<String>,
+    visibility_observers: std::collections::BTreeMap<
+        u64,
+        Rc<RefCell<Box<dyn FnMut(crate::dom::observer::DocumentVisibility)>>>,
+    >,
     image_observers: std::collections::HashMap<u64, ImageObserverEntry>,
 }
 
@@ -1730,23 +2025,26 @@ fn take_all_transition_observers() -> Vec<TransitionObserverEntry> {
     })
 }
 
-pub(crate) fn observe_element_resize(
+pub(crate) fn observe_element_resize_with_box(
     element_id: &str,
+    box_model: crate::dom::observer::ResizeObserverBox,
     callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     let sub_id = crate::internal::next_subscription_id();
     if let Some(doc) = Document::current()
-        && doc.element_by_id(element_id).is_none() {
-            return Err(crate::error::Error::ElementNotFound(element_id.to_string()));
-        }
+        && doc.element_by_id(element_id).is_none()
+    {
+        return Err(crate::error::Error::ElementNotFound(element_id.to_string()));
+    }
     let initial_rect = Document::current()
-        .and_then(|doc| doc.measure_rect(element_id))
+        .and_then(|doc| doc.measure_rect_with_box(element_id, box_model))
         .filter(|r| r.width > 0.0 && r.height > 0.0);
     CURRENT_OBSERVERS.with(|cell| {
         cell.borrow_mut().resize_observers.insert(
             sub_id,
             ResizeObserverEntry {
                 target_id: element_id.to_string(),
+                box_model,
                 last_rect: initial_rect,
                 callback: Rc::new(RefCell::new(callback)),
             },
@@ -1765,6 +2063,18 @@ pub(crate) fn observe_element_resize(
             });
         },
     ))
+}
+
+#[allow(dead_code)]
+pub(crate) fn observe_element_resize(
+    element_id: &str,
+    callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    observe_element_resize_with_box(
+        element_id,
+        crate::dom::observer::ResizeObserverBox::BorderBox,
+        callback,
+    )
 }
 
 pub(crate) fn observe_capture_events(
@@ -1796,11 +2106,16 @@ pub(crate) fn observe_transition_lifecycle(
     callback: Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     let sub_id = crate::internal::next_subscription_id();
+    let registered_generation = Document::current()
+        .and_then(|doc| doc.get_base())
+        .and_then(|b| b.try_borrow().ok().map(|r| r.resolve_generation()))
+        .unwrap_or(0);
     CURRENT_OBSERVERS.with(|cell| {
         cell.borrow_mut().transition_observers.insert(
             sub_id,
             TransitionObserverEntry {
                 target_id: element_id.to_string(),
+                registered_generation,
                 callback,
             },
         );
@@ -1907,9 +2222,10 @@ pub(crate) fn observe_element_scroll(
     let el_id = element_id.to_string();
 
     if let Some(doc) = Document::current()
-        && doc.element_by_id(element_id).is_none() {
-            return Err(crate::error::Error::ElementNotFound(element_id.to_string()));
-        }
+        && doc.element_by_id(element_id).is_none()
+    {
+        return Err(crate::error::Error::ElementNotFound(element_id.to_string()));
+    }
 
     let el_id_clone = el_id.clone();
     CURRENT_OBSERVERS.with(|cell| {
@@ -1927,12 +2243,13 @@ pub(crate) fn observe_element_scroll(
         move || {
             CURRENT_OBSERVERS.with(|cell| {
                 if let Ok(mut reg) = cell.try_borrow_mut()
-                    && let Some(observers) = reg.element_scroll_observers.get_mut(&el_id_clone) {
-                        observers.retain(|(id, _)| *id != sub_id);
-                        if observers.is_empty() {
-                            reg.element_scroll_observers.remove(&el_id_clone);
-                        }
+                    && let Some(observers) = reg.element_scroll_observers.get_mut(&el_id_clone)
+                {
+                    observers.retain(|(id, _)| *id != sub_id);
+                    if observers.is_empty() {
+                        reg.element_scroll_observers.remove(&el_id_clone);
                     }
+                }
             });
         },
     ))
@@ -1975,11 +2292,7 @@ pub(crate) fn watch_image_load(
     let sub_id = crate::internal::next_subscription_id();
     let mut attrs = vec![
         blitz_dom::Attribute {
-            name: blitz_dom::QualName::new(
-                None,
-                blitz_dom::ns!(),
-                blitz_dom::local_name!("style"),
-            ),
+            name: blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("style")),
             value: "display:none".into(),
         },
         blitz_dom::Attribute {
@@ -2012,11 +2325,7 @@ pub(crate) fn watch_image_load(
         });
     }
     attrs.push(blitz_dom::Attribute {
-        name: blitz_dom::QualName::new(
-            None,
-            blitz_dom::ns!(),
-            blitz_dom::local_name!("src"),
-        ),
+        name: blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("src")),
         value: src.to_string(),
     });
 
@@ -2025,11 +2334,7 @@ pub(crate) fn watch_image_load(
         let root_id = base_mut.root_node().id;
         let mut mutator = base_mut.mutate();
         let node_id = mutator.create_element(
-            blitz_dom::QualName::new(
-                None,
-                blitz_dom::ns!(html),
-                blitz_dom::local_name!("img"),
-            ),
+            blitz_dom::QualName::new(None, blitz_dom::ns!(html), blitz_dom::local_name!("img")),
             attrs,
         );
         mutator.append_children(root_id, &[node_id]);
@@ -2077,12 +2382,15 @@ impl Document {
                 return 0;
             };
             if let Some(id) = element_id {
-                reg.element_scroll_observers.get(id).map_or(0, |list| list.len())
+                reg.element_scroll_observers
+                    .get(id)
+                    .map_or(0, |list| list.len())
             } else {
-                reg.element_scroll_observers.values().map(|list| list.len()).sum()
+                reg.element_scroll_observers
+                    .values()
+                    .map(|list| list.len())
+                    .sum()
             }
         })
     }
 }
-
-

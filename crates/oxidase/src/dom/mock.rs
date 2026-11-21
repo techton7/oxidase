@@ -66,13 +66,26 @@ impl Document {
     }
 
     /// Measures pre-transform unscaled rect in mock backend.
-    pub fn measure_unscaled_rect(&self, _element_id: &str) -> Option<crate::runtime::geometry::Rect> {
+    pub fn measure_unscaled_rect(
+        &self,
+        _element_id: &str,
+    ) -> Option<crate::runtime::geometry::Rect> {
         None
     }
 
     /// Measures natural auto border-box height in mock backend.
     pub fn measure_auto_height(&self, _element_id: &str) -> Option<f64> {
         None
+    }
+
+    /// Measures unscaled border-box dimensions without animation in mock backend.
+    pub fn measure_without_animation(&self, _element_id: &str) -> Option<(f64, f64)> {
+        None
+    }
+
+    /// Returns `true` when the element currently has a running or pending CSS animation or transition.
+    pub fn is_element_animating(&self, _element_id: &str) -> bool {
+        false
     }
 
     /// Requests mock focus.
@@ -86,7 +99,9 @@ impl Document {
         element_id: &str,
         _options: crate::dom::element::FocusOptions,
     ) -> Result<(), crate::error::HostError> {
-        Err(crate::error::HostError::ElementNotFound(element_id.to_string()))
+        Err(crate::error::HostError::ElementNotFound(
+            element_id.to_string(),
+        ))
     }
 
     /// Blurs any active element in mock backend.
@@ -240,24 +255,49 @@ impl Document {
     }
 }
 
+pub(crate) fn observe_element_resize_with_box(
+    _element_id: &str,
+    _box_model: crate::dom::observer::ResizeObserverBox,
+    _callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_resize",
+        0,
+        None,
+    ))
+}
+
+#[allow(dead_code)]
 pub(crate) fn observe_element_resize(
     _element_id: &str,
     _callback: Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    Ok(crate::watcher_guard::WatcherGuard::new("mock_resize", 0, None))
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_resize",
+        0,
+        None,
+    ))
 }
 
 pub(crate) fn observe_capture_events(
     _callback: Box<dyn FnMut(crate::dom::observer::CaptureEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    Ok(crate::watcher_guard::WatcherGuard::new("mock_capture", 0, None))
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_capture",
+        0,
+        None,
+    ))
 }
 
 pub(crate) fn observe_transition_lifecycle(
     _element_id: &str,
     _callback: Box<dyn FnMut(crate::dom::observer::TransitionLifecycleEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    Ok(crate::watcher_guard::WatcherGuard::new("mock_transition", 0, None))
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_transition",
+        0,
+        None,
+    ))
 }
 
 pub(crate) fn observe_form_reset(
@@ -265,26 +305,42 @@ pub(crate) fn observe_form_reset(
     _form_id: Option<&str>,
     _callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    Ok(crate::watcher_guard::WatcherGuard::new("mock_form_reset", 0, None))
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_form_reset",
+        0,
+        None,
+    ))
 }
 
 pub(crate) fn observe_pointer_move(
     _callback: Box<dyn FnMut(f64, f64) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    Ok(crate::watcher_guard::WatcherGuard::new("mock_pointer_move", 0, None))
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_pointer_move",
+        0,
+        None,
+    ))
 }
 
 pub(crate) fn observe_scroll(
     _callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    Ok(crate::watcher_guard::WatcherGuard::new("mock_scroll", 0, None))
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_scroll",
+        0,
+        None,
+    ))
 }
 
 pub(crate) fn observe_element_scroll(
     _element_id: &str,
     _callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    Ok(crate::watcher_guard::WatcherGuard::new("mock_element_scroll", 0, None))
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_element_scroll",
+        0,
+        None,
+    ))
 }
 
 std::thread_local! {
@@ -361,6 +417,3 @@ pub(crate) fn observe_visibility_change(
         },
     ))
 }
-
-
-

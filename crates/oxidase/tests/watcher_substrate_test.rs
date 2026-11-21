@@ -2127,6 +2127,7 @@ fn assert_capture_hook_alive(ctx: &TestContext, probes: &CaptureHookProbes) {
     ctx.doc
         .handle_ui_event(UiEvent::PointerMove(capture_hook_test_pointer(50.0, 50.0)));
     ctx.doc.handle_ui_event(UiEvent::Wheel(capture_hook_test_wheel(50.0, 50.0, -20.0)));
+    oxidase::frame::tick(std::time::Duration::from_millis(16));
 
     let offset_after = block_on(ctx.doc.element_by_id("scroll-box").unwrap().scroll_y())
         .expect("scroll_y must succeed");
@@ -2157,6 +2158,7 @@ fn test_scroll_to_preserves_capture_hook_for_dismiss_and_scroll_observers() {
 
         block_on(el.scroll_to(0.0, 40.0)).expect("element scroll_to must succeed");
         flush_pending_events(&ctx);
+        oxidase::frame::tick(std::time::Duration::from_millis(16));
 
         let y = block_on(el.scroll_y()).expect("scroll_y must succeed");
         assert_eq!(y, 40.0, "scroll_to must move the container to the requested offset");

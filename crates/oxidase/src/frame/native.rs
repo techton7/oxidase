@@ -72,10 +72,20 @@ impl NativeFrameState {
 
     fn notify_host_redraw(&self) {
         if let Some((active, requester)) = &self.redraw_requester
-            && active.get() {
-                requester();
-            }
+            && active.get()
+        {
+            requester();
+        }
     }
+}
+
+#[cfg(feature = "native")]
+pub(crate) fn request_host_redraw() {
+    FRAME_STATE.with(|cell| {
+        if let Ok(state) = cell.try_borrow() {
+            state.notify_host_redraw();
+        }
+    });
 }
 
 thread_local! {
@@ -140,7 +150,9 @@ pub fn request_next_frame(
         state.next_id += 1;
 
         let active = Rc::new(Cell::new(true));
-        let callback = Rc::new(RefCell::new(Some(Box::new(on_frame) as Box<dyn FnOnce(FrameInfo)>)));
+        let callback = Rc::new(RefCell::new(Some(
+            Box::new(on_frame) as Box<dyn FnOnce(FrameInfo)>
+        )));
 
         state.one_shot_requests.insert(
             id,
@@ -212,12 +224,6 @@ pub fn is_host_driven() -> bool {
             })
             .unwrap_or(false)
     })
-}
-
-/// Returns the current monotonic native frame clock time in seconds.
-#[cfg_attr(not(feature = "native"), allow(dead_code))]
-pub(crate) fn current_time_secs() -> f64 {
-    FRAME_STATE.with(|c| c.try_borrow().map(|s| s.now.as_secs_f64()).unwrap_or(0.0))
 }
 
 /// Dispatches a single hosted animation frame tied to host redraw.

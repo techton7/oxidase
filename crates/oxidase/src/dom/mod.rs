@@ -74,7 +74,8 @@ mod tests {
 
         // Test with_current scope
         Document::with_current(native_doc.clone(), || {
-            let cur = Document::current().expect("Document::current() must be Some within with_current");
+            let cur =
+                Document::current().expect("Document::current() must be Some within with_current");
             assert_eq!(cur.base().borrow().id(), base_doc.borrow().id());
         });
 
@@ -133,15 +134,18 @@ mod tests {
 
         // Non-existent root returns ElementNotFound
         let missing = native_doc.query_descendant_order("nonexistent", &["g1-a"]);
-        assert!(matches!(missing, Err(crate::error::HostError::ElementNotFound(_))));
+        assert!(matches!(
+            missing,
+            Err(crate::error::HostError::ElementNotFound(_))
+        ));
     }
 
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     #[test]
     fn test_native_sync_animation_observers_non_destructive() {
+        use crate::dom::observer::{TransitionLifecycleEvent, observe_transition_lifecycle};
         use blitz_dom::{BaseDocument, DocumentConfig, QueuedAnimationEvent};
         use blitz_traits::events::{BlitzAnimationEvent, DomEventData};
-        use crate::dom::observer::{observe_transition_lifecycle, TransitionLifecycleEvent};
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -179,14 +183,17 @@ mod tests {
         .expect("observe_transition_lifecycle must succeed");
 
         // Push AnimationEnd event to Blitz's pending queue
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::AnimationEnd(BlitzAnimationEvent {
-                animation_name: "fade-in".to_string(),
-                elapsed_time: 1.0,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::AnimationEnd(BlitzAnimationEvent {
+                    animation_name: "fade-in".to_string(),
+                    elapsed_time: 1.0,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         // Sync from index 0
         native_doc.sync_animation_observers(0);
@@ -214,14 +221,17 @@ mod tests {
         assert_eq!(events_log.borrow().len(), 1);
 
         // Push AnimationCancel event
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::AnimationCancel(BlitzAnimationEvent {
-                animation_name: "slide-out".to_string(),
-                elapsed_time: 0.5,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::AnimationCancel(BlitzAnimationEvent {
+                    animation_name: "slide-out".to_string(),
+                    elapsed_time: 0.5,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         // Sync delta from prev_len = 1
         native_doc.sync_animation_observers(1);
@@ -246,9 +256,9 @@ mod tests {
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     #[test]
     fn test_native_sync_transition_observers_non_destructive() {
+        use crate::dom::observer::{TransitionLifecycleEvent, observe_transition_lifecycle};
         use blitz_dom::{BaseDocument, DocumentConfig, QueuedAnimationEvent};
         use blitz_traits::events::{BlitzTransitionEvent, DomEventData};
-        use crate::dom::observer::{observe_transition_lifecycle, TransitionLifecycleEvent};
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -286,14 +296,17 @@ mod tests {
         .expect("observe_transition_lifecycle must succeed");
 
         // Push TransitionEnd event to Blitz's pending queue
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::TransitionEnd(BlitzTransitionEvent {
-                property_name: "opacity".to_string(),
-                elapsed_time: 0.1,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::TransitionEnd(BlitzTransitionEvent {
+                    property_name: "opacity".to_string(),
+                    elapsed_time: 0.1,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         // Sync from index 0
         native_doc.sync_animation_observers(0);
@@ -321,14 +334,17 @@ mod tests {
         assert_eq!(events_log.borrow().len(), 1);
 
         // Push TransitionCancel event
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::TransitionCancel(BlitzTransitionEvent {
-                property_name: "transform".to_string(),
-                elapsed_time: 0.05,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::TransitionCancel(BlitzTransitionEvent {
+                    property_name: "transform".to_string(),
+                    elapsed_time: 0.05,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         // Sync delta from prev_len = 1
         native_doc.sync_animation_observers(1);
@@ -353,9 +369,9 @@ mod tests {
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     #[test]
     fn test_native_sync_animation_observers_borrow_safety() {
+        use crate::dom::observer::observe_transition_lifecycle;
         use blitz_dom::{BaseDocument, DocumentConfig, QueuedAnimationEvent};
         use blitz_traits::events::{BlitzAnimationEvent, DomEventData};
-        use crate::dom::observer::observe_transition_lifecycle;
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -396,28 +412,34 @@ mod tests {
         })
         .expect("observe_transition_lifecycle must succeed");
 
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::AnimationEnd(BlitzAnimationEvent {
-                animation_name: "reentrant-anim".to_string(),
-                elapsed_time: 1.0,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::AnimationEnd(BlitzAnimationEvent {
+                    animation_name: "reentrant-anim".to_string(),
+                    elapsed_time: 1.0,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         // If the base document borrow were held during observer callback execution,
         // this call would panic with BorrowMutError. It must succeed safely.
         native_doc.sync_animation_observers(0);
 
-        assert!(*reentrancy_called.borrow(), "Re-entrant callback must be invoked safely");
+        assert!(
+            *reentrancy_called.borrow(),
+            "Re-entrant callback must be invoked safely"
+        );
     }
 
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     #[test]
     fn test_native_sync_animation_observers_all() {
+        use crate::dom::observer::{TransitionLifecycleEvent, observe_transition_lifecycle};
         use blitz_dom::{BaseDocument, DocumentConfig, QueuedAnimationEvent};
         use blitz_traits::events::{BlitzAnimationEvent, DomEventData};
-        use crate::dom::observer::{observe_transition_lifecycle, TransitionLifecycleEvent};
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -454,14 +476,17 @@ mod tests {
         })
         .expect("observe_transition_lifecycle must succeed");
 
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::AnimationEnd(BlitzAnimationEvent {
-                animation_name: "zoom-in".to_string(),
-                elapsed_time: 0.25,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::AnimationEnd(BlitzAnimationEvent {
+                    animation_name: "zoom-in".to_string(),
+                    elapsed_time: 0.25,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         native_doc.sync_animation_observers_all();
 
@@ -502,9 +527,9 @@ mod tests {
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     #[test]
     fn test_native_document_pump_hosted_observers() {
+        use crate::dom::observer::{TransitionLifecycleEvent, observe_transition_lifecycle};
         use blitz_dom::{BaseDocument, DocumentConfig, QueuedAnimationEvent};
         use blitz_traits::events::{BlitzAnimationEvent, DomEventData};
-        use crate::dom::observer::{observe_transition_lifecycle, TransitionLifecycleEvent};
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -542,14 +567,17 @@ mod tests {
         .expect("observe_transition_lifecycle must succeed");
 
         // External resolve / event queueing
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::AnimationEnd(BlitzAnimationEvent {
-                animation_name: "pump-anim-1".to_string(),
-                elapsed_time: 0.1,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::AnimationEnd(BlitzAnimationEvent {
+                    animation_name: "pump-anim-1".to_string(),
+                    elapsed_time: 0.1,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         // Pump observers
         native_doc.pump_hosted_observers();
@@ -575,14 +603,17 @@ mod tests {
         .expect("observe_transition_lifecycle must succeed");
 
         // Second external event queued
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::AnimationEnd(BlitzAnimationEvent {
-                animation_name: "pump-anim-2".to_string(),
-                elapsed_time: 0.2,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::AnimationEnd(BlitzAnimationEvent {
+                    animation_name: "pump-anim-2".to_string(),
+                    elapsed_time: 0.2,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         // Pump again
         native_doc.pump_hosted_observers();
@@ -614,14 +645,17 @@ mod tests {
         })
         .expect("observe_transition_lifecycle must succeed");
 
-        base_doc.borrow_mut().pending_animation_events.push(QueuedAnimationEvent {
-            node_id: target_node_id,
-            event: DomEventData::AnimationEnd(BlitzAnimationEvent {
-                animation_name: "pump-anim-3".to_string(),
-                elapsed_time: 0.3,
-                pseudo_element: blitz_traits::SmolStr::default(),
-            }),
-        });
+        base_doc
+            .borrow_mut()
+            .pending_animation_events
+            .push(QueuedAnimationEvent {
+                node_id: target_node_id,
+                event: DomEventData::AnimationEnd(BlitzAnimationEvent {
+                    animation_name: "pump-anim-3".to_string(),
+                    elapsed_time: 0.3,
+                    pseudo_element: blitz_traits::SmolStr::default(),
+                }),
+            });
 
         native_doc.pump_hosted_observers();
         assert_eq!(
@@ -700,7 +734,11 @@ mod tests {
                 .iter()
                 .filter(|a| &*a.name.local == "data-state")
                 .collect();
-            assert_eq!(matching_attrs.len(), 1, "Must have exactly one data-state attribute");
+            assert_eq!(
+                matching_attrs.len(),
+                1,
+                "Must have exactly one data-state attribute"
+            );
             assert_eq!(
                 matching_attrs[0].name.ns,
                 blitz_dom::ns!(),
@@ -744,7 +782,10 @@ mod tests {
             let node = base.get_node(target_node_id).expect("node must exist");
             let elem_data = node.element_data().expect("must be element");
             assert!(
-                !elem_data.attrs.iter().any(|a| &*a.name.local == "data-state"),
+                !elem_data
+                    .attrs
+                    .iter()
+                    .any(|a| &*a.name.local == "data-state"),
                 "Attribute must be removed from raw element attrs"
             );
         }
