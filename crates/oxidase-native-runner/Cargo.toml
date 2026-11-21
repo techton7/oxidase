@@ -15,7 +15,7 @@ publish = false
 # `crates/oxidase/examples/cross_host/main.rs`.
 
 [dependencies]
-oxidase = { version = "0.4.1", path = "../oxidase", features = ["native"] }
+oxidase = { version = "0.4.2", path = "../oxidase", features = ["native"] }
 dioxus-native = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.5" }
 blitz-dom = { git = "https://github.com/techton7/blitz.git", tag = "techton-main-v0.3.5", default-features = false }
 dioxus = { version = "0.8.0-alpha.3", default-features = false, features = ["launch", "devtools", "document", "hooks", "signals", "macro", "html"] }

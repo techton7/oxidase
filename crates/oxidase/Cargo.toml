@@ -14,8 +14,8 @@ name = "all"
 path = "tests/all.rs"
 
 [dependencies]
-oxidase-macro = { path = "../oxidase-macro", version = "0.4.1" }
-oxidase-floating-ui = { path = "../oxidase-floating-ui", version = "0.4.1" }
+oxidase-macro = { path = "../oxidase-macro", version = "0.4.2" }
+oxidase-floating-ui = { path = "../oxidase-floating-ui", version = "0.4.2" }
 
 dioxus.workspace = true
 serde.workspace = true
