@@ -153,6 +153,9 @@ fn __OxidaseNativeHostedRoot() -> Element {
         dioxus_native::winit::event::WindowEvent::Occluded(occluded) => {
             crate::dom::document().set_document_hidden(*occluded);
         }
+        dioxus_native::winit::event::WindowEvent::Focused(false) => {
+            crate::dom::document().dispatch_window_blur();
+        }
         _ => {}
     });
 

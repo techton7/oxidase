@@ -1580,6 +1580,24 @@ impl Document {
         }
     }
 
+    /// Dispatches a window blur notification to all registered window blur observers.
+    pub fn dispatch_window_blur(&self) {
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.window_blur_observers
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb();
+            }
+        }
+    }
+
     /// Dispatches a scroll event to all registered scroll observers.
     pub fn dispatch_scroll(&self) {
         let handles = CURRENT_OBSERVERS.with(|cell| {
@@ -2052,6 +2070,7 @@ struct NativeObserverRegistry {
     >,
     pointer_move_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(f64, f64)>>>>,
     pointer_up_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
+    window_blur_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
     transition_observers: std::collections::HashMap<u64, TransitionObserverEntry>,
     form_reset_observers: std::collections::HashMap<u64, FormResetObserverEntry>,
     scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
@@ -2280,6 +2299,30 @@ pub(crate) fn observe_pointer_up(
             CURRENT_OBSERVERS.with(|cell| {
                 if let Ok(mut reg) = cell.try_borrow_mut() {
                     reg.pointer_up_observers.remove(&sub_id);
+                }
+            });
+        },
+    ))
+}
+
+pub(crate) fn observe_window_blur(
+    callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let sub_id = crate::internal::next_subscription_id();
+    CURRENT_OBSERVERS.with(|cell| {
+        cell.borrow_mut()
+            .window_blur_observers
+            .insert(sub_id, Rc::new(RefCell::new(callback)));
+    });
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "native_window_blur_observer",
+        sub_id,
+        None,
+        move || {
+            CURRENT_OBSERVERS.with(|cell| {
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.window_blur_observers.remove(&sub_id);
                 }
             });
         },

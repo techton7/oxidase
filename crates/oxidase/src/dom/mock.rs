@@ -337,6 +337,12 @@ pub(crate) fn observe_pointer_up(
     ))
 }
 
+pub(crate) fn observe_window_blur(
+    _callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::noop())
+}
+
 pub(crate) fn observe_scroll(
     _callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {

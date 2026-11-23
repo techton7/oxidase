@@ -843,15 +843,17 @@ pub(crate) fn observe_capture_events(
         Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
             let path_ids = read_path_ids(&event);
             let target_id = path_ids.first().cloned();
-            cb_pointer.borrow_mut()(crate::dom::observer::CaptureEvent {
-                kind: crate::dom::observer::CaptureEventKind::PointerDown {
-                    pointer_type: event.pointer_type(),
-                    client_x: f64::from(event.client_x()),
-                    client_y: f64::from(event.client_y()),
-                },
-                target_id,
-                path_ids,
-            });
+            if let Ok(mut cb) = cb_pointer.try_borrow_mut() {
+                cb(crate::dom::observer::CaptureEvent {
+                    kind: crate::dom::observer::CaptureEventKind::PointerDown {
+                        pointer_type: event.pointer_type(),
+                        client_x: f64::from(event.client_x()),
+                        client_y: f64::from(event.client_y()),
+                    },
+                    target_id,
+                    path_ids,
+                });
+            }
         });
 
     let cb_click = cb_cell.clone();
@@ -859,16 +861,18 @@ pub(crate) fn observe_capture_events(
         Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |event: web_sys::MouseEvent| {
             let path_ids = read_path_ids(&event);
             let target_id = path_ids.first().cloned();
-            cb_click.borrow_mut()(crate::dom::observer::CaptureEvent {
-                kind: crate::dom::observer::CaptureEventKind::Click {
-                    is_trusted: event.is_trusted(),
-                    detail: event.detail(),
-                    client_x: f64::from(event.client_x()),
-                    client_y: f64::from(event.client_y()),
-                },
-                target_id,
-                path_ids,
-            });
+            if let Ok(mut cb) = cb_click.try_borrow_mut() {
+                cb(crate::dom::observer::CaptureEvent {
+                    kind: crate::dom::observer::CaptureEventKind::Click {
+                        is_trusted: event.is_trusted(),
+                        detail: event.detail(),
+                        client_x: f64::from(event.client_x()),
+                        client_y: f64::from(event.client_y()),
+                    },
+                    target_id,
+                    path_ids,
+                });
+            }
         });
 
     let cb_focus = cb_cell.clone();
@@ -876,11 +880,13 @@ pub(crate) fn observe_capture_events(
         Closure::<dyn FnMut(web_sys::FocusEvent)>::new(move |event: web_sys::FocusEvent| {
             let path_ids = read_path_ids(&event);
             let target_id = path_ids.first().cloned();
-            cb_focus.borrow_mut()(crate::dom::observer::CaptureEvent {
-                kind: crate::dom::observer::CaptureEventKind::FocusIn,
-                target_id,
-                path_ids,
-            });
+            if let Ok(mut cb) = cb_focus.try_borrow_mut() {
+                cb(crate::dom::observer::CaptureEvent {
+                    kind: crate::dom::observer::CaptureEventKind::FocusIn,
+                    target_id,
+                    path_ids,
+                });
+            }
         });
 
     let cb_key = cb_cell.clone();
@@ -889,11 +895,13 @@ pub(crate) fn observe_capture_events(
             let key = event.key();
             let path_ids = read_path_ids(&event);
             let target_id = path_ids.first().cloned();
-            cb_key.borrow_mut()(crate::dom::observer::CaptureEvent {
-                kind: crate::dom::observer::CaptureEventKind::KeyDown { key },
-                target_id,
-                path_ids,
-            });
+            if let Ok(mut cb) = cb_key.try_borrow_mut() {
+                cb(crate::dom::observer::CaptureEvent {
+                    kind: crate::dom::observer::CaptureEventKind::KeyDown { key },
+                    target_id,
+                    path_ids,
+                });
+            }
         });
 
     let capture_opts = web_sys::AddEventListenerOptions::new();
@@ -1395,6 +1403,34 @@ pub(crate) fn observe_pointer_up(
                 "pointerup",
                 handler.as_ref().unchecked_ref(),
             );
+        },
+    ))
+}
+
+pub(crate) fn observe_window_blur(
+    mut callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let sub_id = crate::internal::next_subscription_id();
+    let win =
+        web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
+
+    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        callback();
+    });
+
+    let win_target: web_sys::EventTarget = win.into();
+    let _ = win_target.add_event_listener_with_callback("blur", handler.as_ref().unchecked_ref());
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "web_window_blur_observer",
+        sub_id,
+        None,
+        move || {
+            let _ = win_target
+                .remove_event_listener_with_callback("blur", handler.as_ref().unchecked_ref());
         },
     ))
 }

@@ -34,6 +34,7 @@ pub use scroll_lock::{
 };
 
 pub use backend::Document;
+pub use crate::runtime::geometry::Rect;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use backend::extract_base_doc;

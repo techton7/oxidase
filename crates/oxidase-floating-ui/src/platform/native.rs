@@ -119,17 +119,34 @@ fn intersect_rect(a: &Rect, b: &Rect) -> Rect {
     Rect::new(left, top, width, height)
 }
 
+/// Checks if a native node's computed styles use `position: fixed`.
+pub fn is_fixed_position_node(base: &BaseDocument, node_id: NodeId) -> bool {
+    let Some(node) = base.get_node(node_id) else {
+        return false;
+    };
+    node.primary_styles()
+        .is_some_and(|styles| format!("{:?}", styles.clone_position()) == "Fixed")
+}
+
 /// Collects all scrollable/clipping ancestor `NodeId`s in traversal order.
+/// Stops when crossing a `position: fixed` boundary, because in CSS a `position: fixed`
+/// subtree escapes outer normal `overflow` clipping containers.
 pub fn get_node_overflow_ancestors(base: &BaseDocument, node_id: NodeId) -> Vec<NodeId> {
     let chain = base.node_chain(node_id);
     let root_id = base.root_node().id;
     let mut ancestors = Vec::new();
+    if is_fixed_position_node(base, node_id) {
+        return ancestors;
+    }
     for &anc_id in chain.iter().skip(1) {
         if anc_id == root_id {
             break;
         }
         if is_overflow_node(base, anc_id) {
             ancestors.push(anc_id);
+        }
+        if is_fixed_position_node(base, anc_id) {
+            break;
         }
     }
     ancestors

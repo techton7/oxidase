@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "accesskit_xplat"
 version = "0.2.1"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "accesskit",
  "accesskit_ios",
@@ -462,7 +462,7 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.4"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -473,7 +473,7 @@ dependencies = [
  "color",
  "cssparser",
  "cursor-icon",
- "debug_timer 0.1.3 (git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7)",
+ "debug_timer 0.1.3 (git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8)",
  "euclid",
  "html-escape",
  "icu_casemap",
@@ -513,7 +513,7 @@ dependencies = [
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.4"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -524,7 +524,7 @@ dependencies = [
 [[package]]
 name = "blitz-net"
 version = "0.3.0-beta.4"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "blitz-traits",
  "data-url",
@@ -536,7 +536,7 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.4"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "anyrender",
  "anyrender_svg",
@@ -558,7 +558,7 @@ dependencies = [
 [[package]]
 name = "blitz-shell"
 version = "0.3.0-beta.4"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "accesskit",
  "accesskit_xplat",
@@ -580,7 +580,7 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.4"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "atomic_refcell",
  "bitflags",
@@ -1108,7 +1108,7 @@ checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 
 [[package]]
 name = "derive_more"
@@ -1397,7 +1397,7 @@ dependencies = [
 [[package]]
 name = "dioxus-native"
 version = "0.7.0"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "android-activity",
  "anyrender",
@@ -1432,7 +1432,7 @@ dependencies = [
 [[package]]
 name = "dioxus-native-dom"
 version = "0.7.0"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -1579,6 +1579,8 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpi"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dragonbox_ecma"
@@ -3712,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyrender_vello",
  "blitz-dom",
@@ -3722,6 +3724,7 @@ dependencies = [
  "dioxus-native",
  "futures-timer",
  "js-sys",
+ "libc",
  "oxidase-floating-ui",
  "oxidase-macro",
  "serde",
@@ -3734,7 +3737,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase-floating-ui"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "blitz-dom",
  "js-sys",
@@ -3747,7 +3750,7 @@ dependencies = [
 
 [[package]]
 name = "oxidase-macro"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -5303,7 +5306,7 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.4"
-source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.7#2001b091a7c0c6e4752bd581dfd4c9b093bbeb4b"
+source = "git+https://github.com/techton7/blitz.git?tag=techton-main-v0.3.8#6645b78e0a259acb4fa140b60d756c47305ffe1d"
 dependencies = [
  "bitflags",
  "stylo",
@@ -7405,6 +7408,8 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winit"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "453408a9f608e14c92c6c1b5ef0193e1699aee3bfb17b48cc5423c6ec2ae1806"
 dependencies = [
  "bitflags",
  "cfg_aliases",
@@ -7430,6 +7435,8 @@ dependencies = [
 [[package]]
 name = "winit-android"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d356e863a4adda4a0309e34a0cafbb9dd57be61cca7c7ae3de95a285938959cd"
 dependencies = [
  "android-activity",
  "bitflags",
@@ -7444,6 +7451,8 @@ dependencies = [
 [[package]]
 name = "winit-appkit"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd77d5b64db1abaf4ba11d08c1da69695f9c4fdc3ee19a543479872ef79e05c0"
 dependencies = [
  "bitflags",
  "block2 0.6.2",
@@ -7465,6 +7474,8 @@ dependencies = [
 [[package]]
 name = "winit-common"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93ef82b1146fc93e6f60755e851152d708ede1f845eb73e8fdefc3192458ccf5"
 dependencies = [
  "block2 0.6.2",
  "dpi",
@@ -7482,6 +7493,8 @@ dependencies = [
 [[package]]
 name = "winit-core"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74158ad0526ab0f1e850b89f63a4513f4fee9178ef72b408bfb37f30a429d62e"
 dependencies = [
  "bitflags",
  "cursor-icon",
@@ -7495,6 +7508,8 @@ dependencies = [
 [[package]]
 name = "winit-orbital"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "321adbc811d8b15f34f6d6ec49afaff4cbc06c3e807e56de8eda6ec9d3466151"
 dependencies = [
  "bitflags",
  "dpi",
@@ -7510,6 +7525,8 @@ dependencies = [
 [[package]]
 name = "winit-uikit"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed4addb22374bc174e41143c22608ed125590962157bdcb02415377b41ef1b5a"
 dependencies = [
  "bitflags",
  "block2 0.6.2",
@@ -7529,6 +7546,8 @@ dependencies = [
 [[package]]
 name = "winit-wayland"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8352b11bc0d223a37bbbdb55d2250949917c313f3ee07a34da7d614d74fce69e"
 dependencies = [
  "bitflags",
  "calloop",
@@ -7555,6 +7574,8 @@ dependencies = [
 [[package]]
 name = "winit-web"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c38d83a15b854abe625a3db8144ad9a5094899d9a0bc976b4edc4c233197563"
 dependencies = [
  "atomic-waker",
  "bitflags",
@@ -7576,6 +7597,8 @@ dependencies = [
 [[package]]
 name = "winit-win32"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf3b2326760dad4a8fe721a8c8a40fd4f7efb338ef468f340794ea1efcd5261e"
 dependencies = [
  "bitflags",
  "cursor-icon",
@@ -7593,6 +7616,8 @@ dependencies = [
 [[package]]
 name = "winit-x11"
 version = "0.31.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eee2be0a6dce77b889b6f9040a349e8c2cea6c0c4257f0b61591d7e0d9a6dfaf"
 dependencies = [
  "bitflags",
  "bytemuck",

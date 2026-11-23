@@ -173,6 +173,51 @@ impl Element {
         }
     }
 
+    /// Measures the element's CSSOM `offsetLeft`/`offsetTop`/`offsetWidth`/`offsetHeight` box
+    /// relative to its `offsetParent` without CSS transform adjustments.
+    pub fn offset_rect(&self) -> Option<Rect> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().ok()?;
+                let node = base.get_node(*node_id)?;
+                let pos = node.offset_top_left();
+                let layout = node.final_layout();
+                Some(Rect::new(
+                    pos.x as f64,
+                    pos.y as f64,
+                    layout.size.width as f64,
+                    layout.size.height as f64,
+                ))
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                let html_el = el.dyn_ref::<web_sys::HtmlElement>()?;
+                Some(Rect::new(
+                    html_el.offset_left() as f64,
+                    html_el.offset_top() as f64,
+                    html_el.offset_width() as f64,
+                    html_el.offset_height() as f64,
+                ))
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    return Self::from_native(nh.base_document(), nh.node_id()).offset_rect();
+                }
+                #[cfg(target_arch = "wasm32")]
+                if let Some(el) = handle.downcast::<web_sys::Element>() {
+                    return Self::from_web(el.clone()).offset_rect();
+                }
+                let _ = handle;
+                None
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
+        }
+    }
+
     /// Synchronously grants keyboard focus to the element with default focus options when backed by a live DOM handle.
     pub fn focus_sync(&self) -> Result<(), HostError> {
         self.focus_sync_with_options(FocusOptions::default())

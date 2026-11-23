@@ -199,6 +199,11 @@ pub fn observe_pointer_up(callback: impl FnMut() + 'static) -> Result<WatcherGua
     crate::dom::backend::observe_pointer_up(Box::new(callback))
 }
 
+/// Observes host window `blur` events across Web and Native hosts.
+pub fn observe_window_blur(callback: impl FnMut() + 'static) -> Result<WatcherGuard> {
+    crate::dom::backend::observe_window_blur(Box::new(callback))
+}
+
 /// Observes scroll events across viewport and scrollable ancestor containers.
 pub fn observe_scroll(callback: impl FnMut() + 'static) -> Result<WatcherGuard> {
     crate::dom::backend::observe_scroll(Box::new(callback))
