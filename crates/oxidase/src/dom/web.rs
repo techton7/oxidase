@@ -452,6 +452,17 @@ impl Document {
         doc.hidden() || doc.visibility_state() == web_sys::VisibilityState::Hidden
     }
 
+    /// Returns `true` when the browser document currently has a non-empty text selection.
+    pub fn has_text_selection(&self) -> bool {
+        let Some(win) = web_sys::window() else {
+            return false;
+        };
+        let Ok(Some(sel)) = win.get_selection() else {
+            return false;
+        };
+        !sel.is_collapsed() && !String::from(js_sys::Object::to_string(&sel)).is_empty()
+    }
+
     /// Host API parity setter for document visibility (browser owns `document.hidden` on Web).
     pub fn set_document_hidden(&self, _hidden: bool) {}
 
@@ -1341,6 +1352,47 @@ pub(crate) fn observe_pointer_move(
         move || {
             let _ = doc_target.remove_event_listener_with_callback(
                 "pointermove",
+                handler.as_ref().unchecked_ref(),
+            );
+        },
+    ))
+}
+
+pub(crate) fn observe_pointer_up(
+    mut callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let sub_id = crate::internal::next_subscription_id();
+    let win =
+        web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
+    let doc = win
+        .document()
+        .ok_or_else(|| crate::error::Error::Unsupported("No document".into()))?;
+
+    let handler =
+        Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |_event: web_sys::PointerEvent| {
+            callback();
+        });
+
+    let opts = web_sys::AddEventListenerOptions::new();
+    opts.set_passive(true);
+
+    let doc_target: web_sys::EventTarget = doc.into();
+    let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
+        "pointerup",
+        handler.as_ref().unchecked_ref(),
+        &opts,
+    );
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "web_pointer_up_observer",
+        sub_id,
+        None,
+        move || {
+            let _ = doc_target.remove_event_listener_with_callback(
+                "pointerup",
                 handler.as_ref().unchecked_ref(),
             );
         },

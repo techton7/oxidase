@@ -227,6 +227,14 @@ impl Document {
                     return;
                 }
 
+                if let DomEventData::PointerUp(_) = &event.data {
+                    if let Some(base_rc) = weak_base.upgrade() {
+                        let doc = Document::from_base_raw(base_rc);
+                        doc.dispatch_pointer_up();
+                    }
+                    return;
+                }
+
                 if let DomEventData::PointerCancel(_) = &event.data {
                     if let Ok(mut st) = click_state.try_borrow_mut() {
                         st.armed_pointer_click = false;
@@ -973,6 +981,17 @@ impl Document {
         NATIVE_DOCUMENT_HIDDEN.with(|c| c.get())
     }
 
+    /// Returns `true` when the native Blitz document currently has an active (non-empty) text selection.
+    pub fn has_text_selection(&self) -> bool {
+        let Some(base_rc) = self.get_base() else {
+            return false;
+        };
+        let Ok(base) = base_rc.try_borrow() else {
+            return false;
+        };
+        base.has_text_selection()
+    }
+
     /// Updates native document visibility state and notifies registered visibility observers on transitions.
     pub fn set_document_hidden(&self, hidden: bool) {
         let prev = NATIVE_DOCUMENT_HIDDEN.with(|c| c.replace(hidden));
@@ -1543,6 +1562,24 @@ impl Document {
         }
     }
 
+    /// Dispatches a passive document-wide pointer up notification to all registered pointer up observers.
+    pub fn dispatch_pointer_up(&self) {
+        let handles = CURRENT_OBSERVERS.with(|cell| {
+            let Ok(reg) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            reg.pointer_up_observers
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        for handle in handles {
+            if let Ok(mut cb) = handle.try_borrow_mut() {
+                cb();
+            }
+        }
+    }
+
     /// Dispatches a scroll event to all registered scroll observers.
     pub fn dispatch_scroll(&self) {
         let handles = CURRENT_OBSERVERS.with(|cell| {
@@ -2014,6 +2051,7 @@ struct NativeObserverRegistry {
         Rc<RefCell<Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>>,
     >,
     pointer_move_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(f64, f64)>>>>,
+    pointer_up_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
     transition_observers: std::collections::HashMap<u64, TransitionObserverEntry>,
     form_reset_observers: std::collections::HashMap<u64, FormResetObserverEntry>,
     scroll_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
@@ -2218,6 +2256,30 @@ pub(crate) fn observe_pointer_move(
             CURRENT_OBSERVERS.with(|cell| {
                 if let Ok(mut reg) = cell.try_borrow_mut() {
                     reg.pointer_move_observers.remove(&sub_id);
+                }
+            });
+        },
+    ))
+}
+
+pub(crate) fn observe_pointer_up(
+    callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    let sub_id = crate::internal::next_subscription_id();
+    CURRENT_OBSERVERS.with(|cell| {
+        cell.borrow_mut()
+            .pointer_up_observers
+            .insert(sub_id, Rc::new(RefCell::new(callback)));
+    });
+
+    Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
+        "native_pointer_up_observer",
+        sub_id,
+        None,
+        move || {
+            CURRENT_OBSERVERS.with(|cell| {
+                if let Ok(mut reg) = cell.try_borrow_mut() {
+                    reg.pointer_up_observers.remove(&sub_id);
                 }
             });
         },

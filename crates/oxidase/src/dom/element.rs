@@ -626,6 +626,346 @@ impl Element {
         }
     }
 
+    /// Queries all descendant elements of this element matching the given CSS selector in tree order.
+    pub fn query_selector_all(&self, selector: &str) -> Vec<Self> {
+        let _ = selector;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let Ok(base) = doc.try_borrow() else {
+                    return Vec::new();
+                };
+                if base.get_node(*node_id).is_none() {
+                    return Vec::new();
+                }
+                let Ok(nids) = base.query_selector_all_in(*node_id, selector) else {
+                    return Vec::new();
+                };
+                drop(base);
+                nids.into_iter()
+                    .map(|nid| Self::from_native(doc.clone(), nid))
+                    .collect()
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                let Ok(list) = el.query_selector_all(selector) else {
+                    return Vec::new();
+                };
+                let len = list.length();
+                let mut out = Vec::with_capacity(len as usize);
+                for i in 0..len {
+                    if let Some(node) = list.item(i)
+                        && let Ok(child_el) = node.dyn_into::<web_sys::Element>()
+                    {
+                        out.push(Self::from_web(child_el));
+                    }
+                }
+                out
+            }
+            ElementTarget::Mounted(_) => Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Vec::new(),
+        }
+    }
+
+    /// Synchronously triggers a DOM click on this element across Web and Blitz Native hosts.
+    pub fn click_sync(&self) -> Result<(), HostError> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let nid = *node_id;
+                if let Ok(mut base) = doc.try_borrow_mut() {
+                    let Some(node) = base.get_node(nid) else {
+                        return Err(HostError::ElementNotFound(format!("NodeId: {:?}", nid)));
+                    };
+                    let click_data =
+                        node.synthetic_click_event(
+                            dioxus::prelude::keyboard_types::Modifiers::empty(),
+                        );
+                    base.queue_event(blitz_traits::events::DomEvent::new(
+                        nid,
+                        click_data,
+                        blitz_traits::events::EventDispatchSource::Script,
+                    ));
+                    crate::frame::native::request_host_redraw();
+                    Ok(())
+                } else {
+                    let doc_clone = doc.clone();
+                    let _ = crate::internal::safe_spawn(async move {
+                        if let Ok(mut base) = doc_clone.try_borrow_mut()
+                            && let Some(node) = base.get_node(nid)
+                        {
+                            let click_data = node.synthetic_click_event(
+                                dioxus::prelude::keyboard_types::Modifiers::empty(),
+                            );
+                            base.queue_event(blitz_traits::events::DomEvent::new(
+                                nid,
+                                click_data,
+                                blitz_traits::events::EventDispatchSource::Script,
+                            ));
+                            crate::frame::native::request_host_redraw();
+                        }
+                    });
+                    Ok(())
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                let html_el = el.dyn_ref::<web_sys::HtmlElement>().ok_or_else(|| {
+                    HostError::Unsupported("Element is not an HtmlElement".into())
+                })?;
+                html_el.click();
+                Ok(())
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.click_sync();
+                }
+                let _ = handle;
+                Err(HostError::Unsupported(
+                    "MountedHandle does not support synchronous click_sync".into(),
+                ))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(()),
+        }
+    }
+
+    /// Returns the UTF-16 `(selection_start, selection_end)` offsets of an `<input>` or `<textarea>`,
+    /// or `None` if the element is not a text input or has no active selection.
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                if let Ok(base) = doc.try_borrow() {
+                    let node = base.get_node(*node_id)?;
+                    let el = node.element_data()?;
+                    if let Some(input) = el.text_input_data() {
+                        let text = input.editor.raw_text();
+                        let range = input.editor.raw_selection().text_range();
+                        return Some((
+                            byte_to_utf16(text, range.start),
+                            byte_to_utf16(text, range.end),
+                        ));
+                    }
+                    if !matches!(&*el.name.local, "input" | "textarea") {
+                        return None;
+                    }
+                }
+                let mut base = doc.try_borrow_mut().ok()?;
+                if !ensure_native_text_input_initialized(&mut base, *node_id) {
+                    return None;
+                }
+                let input = base.get_node(*node_id)?.element_data()?.text_input_data()?;
+                let text = input.editor.raw_text();
+                let range = input.editor.raw_selection().text_range();
+                Some((
+                    byte_to_utf16(text, range.start),
+                    byte_to_utf16(text, range.end),
+                ))
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                if let Some(input) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+                    let start = input.selection_start().ok().flatten()? as usize;
+                    let end = input.selection_end().ok().flatten()? as usize;
+                    return Some((start, end));
+                }
+                if let Some(textarea) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                    let start = textarea.selection_start().ok().flatten()? as usize;
+                    let end = textarea.selection_end().ok().flatten()? as usize;
+                    return Some((start, end));
+                }
+                None
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.selection_range();
+                }
+                let _ = handle;
+                None
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
+        }
+    }
+
+    /// Sets the UTF-16 selection range `(start, end)` on an `<input>` or `<textarea>`.
+    pub fn set_selection_range(&self, start: usize, end: usize) -> Result<(), HostError> {
+        let _ = (start, end);
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                if base.get_node(*node_id).is_none() {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                }
+                if !ensure_native_text_input_initialized(&mut base, *node_id) {
+                    return Err(HostError::Unsupported("Element is not a text input".into()));
+                }
+                base.with_text_input(*node_id, |mut driver| {
+                    let text = driver.editor.raw_text().to_string();
+                    let start_byte = utf16_to_byte(&text, start);
+                    let end_byte = utf16_to_byte(&text, start.max(end));
+                    driver.select_byte_range(start_byte, end_byte);
+                });
+                crate::frame::native::request_host_redraw();
+                Ok(())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                let s = start.min(u32::MAX as usize) as u32;
+                let e = end.min(u32::MAX as usize) as u32;
+                if let Some(input) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+                    return input.set_selection_range(s, e).map_err(|err| {
+                        HostError::Js(crate::JsError::Exception {
+                            message: format!("{err:?}"),
+                            stack: None,
+                        })
+                    });
+                }
+                if let Some(textarea) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                    return textarea.set_selection_range(s, e).map_err(|err| {
+                        HostError::Js(crate::JsError::Exception {
+                            message: format!("{err:?}"),
+                            stack: None,
+                        })
+                    });
+                }
+                Err(HostError::Unsupported(
+                    "Element is not a text input or textarea".into(),
+                ))
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.set_selection_range(start, end);
+                }
+                let _ = handle;
+                Err(HostError::Unsupported(
+                    "MountedHandle does not support synchronous set_selection_range".into(),
+                ))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(()),
+        }
+    }
+
+    /// Selects the entire text content of an `<input>` or `<textarea>`.
+    pub fn select(&self) -> Result<(), HostError> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                if base.get_node(*node_id).is_none() {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                }
+                if !ensure_native_text_input_initialized(&mut base, *node_id) {
+                    return Err(HostError::Unsupported("Element is not a text input".into()));
+                }
+                base.with_text_input(*node_id, |mut driver| {
+                    let len = driver.editor.raw_text().len();
+                    driver.select_byte_range(0, len);
+                });
+                crate::frame::native::request_host_redraw();
+                Ok(())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                if let Some(input) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+                    input.select();
+                    return Ok(());
+                }
+                if let Some(textarea) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                    textarea.select();
+                    return Ok(());
+                }
+                Err(HostError::Unsupported(
+                    "Element is not a text input or textarea".into(),
+                ))
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.select();
+                }
+                let _ = handle;
+                Err(HostError::Unsupported(
+                    "MountedHandle does not support synchronous select".into(),
+                ))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(()),
+        }
+    }
+
+    /// Synchronously sets the value of an `<input>` or `<textarea>` across Web and Blitz Native hosts.
+    pub fn set_input_value(&self, value: &str) -> Result<(), HostError> {
+        let _ = value;
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let mut base = doc.try_borrow_mut().map_err(|_| {
+                    HostError::Unsupported("Native document is currently borrowed".into())
+                })?;
+                if base.get_node(*node_id).is_none() {
+                    return Err(HostError::ElementNotFound(format!("NodeId: {:?}", node_id)));
+                }
+                if !ensure_native_text_input_initialized(&mut base, *node_id) {
+                    return Err(HostError::Unsupported("Element is not a text input".into()));
+                }
+                if !base.set_text_input_value(*node_id, value) {
+                    return Err(HostError::Unsupported("Element is not a text input".into()));
+                }
+                crate::frame::native::request_host_redraw();
+                Ok(())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                use wasm_bindgen::JsCast;
+                if let Some(input) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+                    input.set_value(value);
+                    return Ok(());
+                }
+                if let Some(textarea) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                    textarea.set_value(value);
+                    return Ok(());
+                }
+                Err(HostError::Unsupported(
+                    "Element is not a text input or textarea".into(),
+                ))
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    let el = Self::from_native(nh.base_document(), nh.node_id());
+                    return el.set_input_value(value);
+                }
+                let _ = handle;
+                Err(HostError::Unsupported(
+                    "MountedHandle does not support synchronous set_input_value".into(),
+                ))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => Ok(()),
+        }
+    }
+
     /// Synchronously scrolls the element into the visible viewport with default options when backed by a live DOM handle.
     pub fn scroll_into_view_sync(&self) -> Result<(), HostError> {
         self.scroll_into_view_sync_with_options(ScrollIntoViewOptions::default())
@@ -1176,6 +1516,47 @@ impl Element {
     }
 }
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+fn byte_to_utf16(text: &str, byte_offset: usize) -> usize {
+    let mut safe_end = byte_offset.min(text.len());
+    while safe_end > 0 && !text.is_char_boundary(safe_end) {
+        safe_end -= 1;
+    }
+    text[..safe_end].chars().map(char::len_utf16).sum()
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+fn utf16_to_byte(text: &str, utf16_offset: usize) -> usize {
+    let mut units = 0;
+    for (byte_offset, ch) in text.char_indices() {
+        if units >= utf16_offset {
+            return byte_offset;
+        }
+        units += ch.len_utf16();
+    }
+    text.len()
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+fn ensure_native_text_input_initialized(
+    base: &mut blitz_dom::BaseDocument,
+    node_id: blitz_dom::NodeId,
+) -> bool {
+    let Some(el) = base.get_node(node_id).and_then(|n| n.element_data()) else {
+        return false;
+    };
+    if el.text_input_data().is_some() {
+        return true;
+    }
+    if matches!(&*el.name.local, "input" | "textarea") {
+        let now = base.last_animation_time();
+        base.resolve(now);
+    }
+    base.get_node(node_id)
+        .and_then(|n| n.element_data())
+        .is_some_and(|el| el.text_input_data().is_some())
+}
+
 /// Extracts the W3C DOM `pointerId` from a Dioxus `PointerData` payload across Web and Native hosts.
 pub fn extract_pointer_id(evt: &dioxus::prelude::PointerData) -> i32 {
     #[cfg(target_arch = "wasm32")]
@@ -1441,6 +1822,12 @@ mod tests {
             assert_eq!(el.tag_name(), None);
             assert!(el.closest_tag("button").is_none());
             assert!(el.query_selector("button").is_none());
+            assert!(el.query_selector_all("button").is_empty());
+            assert!(el.click_sync().is_ok());
+            assert_eq!(el.selection_range(), None);
+            assert!(el.set_selection_range(0, 2).is_ok());
+            assert!(el.select().is_ok());
+            assert!(el.set_input_value("123456").is_ok());
             assert!(!el.has_attribute("data-state"));
             assert_eq!(el.get_attribute("data-state"), None);
             el.set_attribute("data-state", "open");
@@ -1503,5 +1890,29 @@ mod tests {
         // Press >= 500ms later resets to detail 1
         let t4 = t3 + Duration::from_millis(500);
         assert_eq!(tracker.record_primary_press(t4, 106.0, 200.0), 1);
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+    #[test]
+    fn test_utf16_utf8_offset_conversions() {
+        // 'a' (1B, 1 UTF-16), '😀' (4B, 2 UTF-16), '한' (3B, 1 UTF-16), 'b' (1B, 1 UTF-16)
+        let s = "a😀한b";
+        assert_eq!(byte_to_utf16(s, 0), 0);
+        assert_eq!(byte_to_utf16(s, 1), 1);
+        assert_eq!(byte_to_utf16(s, 5), 3);
+        assert_eq!(byte_to_utf16(s, 8), 4);
+        assert_eq!(byte_to_utf16(s, 9), 5);
+        // Unaligned byte offset inside '😀' clamps safely back to char boundary
+        assert_eq!(byte_to_utf16(s, 3), 1);
+        // Out of bounds clamps to string end
+        assert_eq!(byte_to_utf16(s, 100), 5);
+
+        assert_eq!(utf16_to_byte(s, 0), 0);
+        assert_eq!(utf16_to_byte(s, 1), 1);
+        assert_eq!(utf16_to_byte(s, 2), 5);
+        assert_eq!(utf16_to_byte(s, 3), 5);
+        assert_eq!(utf16_to_byte(s, 4), 8);
+        assert_eq!(utf16_to_byte(s, 5), 9);
+        assert_eq!(utf16_to_byte(s, 99), 9);
     }
 }

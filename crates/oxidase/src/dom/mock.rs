@@ -153,6 +153,11 @@ impl Document {
         }
     }
 
+    /// Returns `true` when the mock document currently has an active text selection.
+    pub fn has_text_selection(&self) -> bool {
+        false
+    }
+
     /// Queries mock reference hidden.
     pub fn is_reference_hidden(&self, _anchor_ids: &[&str]) -> bool {
         false
@@ -317,6 +322,16 @@ pub(crate) fn observe_pointer_move(
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     Ok(crate::watcher_guard::WatcherGuard::new(
         "mock_pointer_move",
+        0,
+        None,
+    ))
+}
+
+pub(crate) fn observe_pointer_up(
+    _callback: Box<dyn FnMut() + 'static>,
+) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    Ok(crate::watcher_guard::WatcherGuard::new(
+        "mock_pointer_up",
         0,
         None,
     ))
