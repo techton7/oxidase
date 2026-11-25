@@ -218,6 +218,47 @@ impl Element {
         }
     }
 
+    /// Returns the CSSOM computed `z-index` string (`"auto"` or a decimal integer
+    /// such as `"0"`, `"-1"`, `"50"`) for this element, independent of `position`.
+    /// Returns `None` when the node is detached, unavailable, or backed by `ElementTarget::Mock`.
+    pub fn computed_z_index(&self) -> Option<String> {
+        match &self.target {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+            ElementTarget::Native { doc, node_id } => {
+                let base = doc.try_borrow().ok()?;
+                let _ = base.get_node(*node_id)?;
+                let value = base.resolved_style_value(*node_id, "z-index");
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }
+            #[cfg(target_arch = "wasm32")]
+            ElementTarget::Web(el) => {
+                let value = web_sys::window()?
+                    .get_computed_style(el)
+                    .ok()
+                    .flatten()?
+                    .get_property_value("z-index")
+                    .ok()?;
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }
+            ElementTarget::Mounted(handle) => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+                if let Some(nh) = handle.downcast::<dioxus_native::NodeHandle>() {
+                    return Self::from_native(nh.base_document(), nh.node_id()).computed_z_index();
+                }
+                #[cfg(target_arch = "wasm32")]
+                if let Some(el) = handle.downcast::<web_sys::Element>() {
+                    return Self::from_web(el.clone()).computed_z_index();
+                }
+                let _ = handle;
+                None
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ElementTarget::Mock => None,
+        }
+    }
+
     /// Synchronously grants keyboard focus to the element with default focus options when backed by a live DOM handle.
     pub fn focus_sync(&self) -> Result<(), HostError> {
         self.focus_sync_with_options(FocusOptions::default())

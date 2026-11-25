@@ -88,6 +88,32 @@ impl Document {
         false
     }
 
+    /// Looks up `element_id` in this document and returns its CSSOM computed `z-index`
+    /// string (`"auto"` or integer string), or `None` if not found / unavailable.
+    pub fn computed_z_index_by_id(&self, element_id: &str) -> Option<String> {
+        MOCK_COMPUTED_Z_INDEX.with(|cell| {
+            let map = cell.borrow();
+            let value = map.get(element_id)?;
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+    }
+
+    /// Registers a deterministic computed `z-index` value for `element_id` in host unit tests.
+    pub fn set_computed_z_index(&self, element_id: &str, value: &str) {
+        MOCK_COMPUTED_Z_INDEX.with(|cell| {
+            cell.borrow_mut()
+                .insert(element_id.to_string(), value.to_string());
+        });
+    }
+
+    /// Removes any registered mock computed `z-index` override for `element_id`.
+    pub fn clear_computed_z_index(&self, element_id: &str) {
+        MOCK_COMPUTED_Z_INDEX.with(|cell| {
+            cell.borrow_mut().remove(element_id);
+        });
+    }
+
     /// Requests mock focus.
     pub fn set_focus(&self, element_id: &str) -> Result<(), crate::error::HostError> {
         self.set_focus_with_options(element_id, crate::dom::element::FocusOptions::default())
@@ -371,6 +397,8 @@ pub(crate) fn observe_element_scroll(
 }
 
 std::thread_local! {
+    static MOCK_COMPUTED_Z_INDEX: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
     static MOCK_IMAGE_STATES: std::cell::RefCell<std::collections::HashMap<String, crate::dom::observer::ImageLoadStatus>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
     static MOCK_IMAGE_OBSERVERS: std::cell::RefCell<

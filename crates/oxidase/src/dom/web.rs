@@ -424,6 +424,12 @@ impl Document {
         element_has_running_animations(&el).unwrap_or(false)
     }
 
+    /// Looks up `element_id` in this document and returns its CSSOM computed `z-index`
+    /// string (`"auto"` or integer string), or `None` if not found / unavailable.
+    pub fn computed_z_index_by_id(&self, element_id: &str) -> Option<String> {
+        self.element_by_id(element_id)?.computed_z_index()
+    }
+
     /// Checks whether any anchor element is occluded or outside viewport bounds.
     pub fn is_reference_hidden(&self, anchor_ids: &[&str]) -> bool {
         let vp = self.viewport();

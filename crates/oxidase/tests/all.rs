@@ -4,6 +4,8 @@ mod frame_test;
 mod batch1_substrate_test;
 #[path = "batch2_substrate_test.rs"]
 mod batch2_substrate_test;
+#[path = "computed_z_index_test.rs"]
+mod computed_z_index_test;
 #[path = "image_load_observer_test.rs"]
 mod image_load_observer_test;
 #[path = "macro_test.rs"]
@@ -47,6 +49,7 @@ fn all_test_files_are_included() {
     let mut expected = [
         "batch1_substrate_test.rs",
         "batch2_substrate_test.rs",
+        "computed_z_index_test.rs",
         "direct_object_test.rs",
         "dom_native_test.rs",
         "floating_cross_host_test.rs",

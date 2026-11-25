@@ -875,6 +875,12 @@ impl Document {
         base.node_has_active_animations(node_id) || base.node_has_active_transitions(node_id)
     }
 
+    /// Looks up `element_id` in this document and returns its CSSOM computed `z-index`
+    /// string (`"auto"` or integer string), or `None` if not found / unavailable.
+    pub fn computed_z_index_by_id(&self, element_id: &str) -> Option<String> {
+        self.element_by_id(element_id)?.computed_z_index()
+    }
+
     /// Queries the first element in the document matching the given CSS selector.
     pub fn query_selector(&self, selector: &str) -> Option<crate::dom::element::Element> {
         let base = self.get_base()?;
