@@ -254,19 +254,23 @@ mod native_tests {
         Document::with_current(doc.clone(), || {
             doc.resolve(0.0);
 
-            // Clamped box starts at 40px despite 136px natural border-box height (48 + 60 + 24 padding + 4 border)
+            // Clamped box starts at 40px CSS height with transform: scale(0.9) -> 36px visual rect, 40px unscaled
             let clamped_rect = doc
                 .measure_rect("clamped-toast")
                 .expect("clamped-toast must resolve");
             assert!(
-                (clamped_rect.height - 40.0).abs() < 0.01,
-                "Expected clamped height 40.0, got {}",
+                (clamped_rect.height - 36.0).abs() < 0.01,
+                "Expected transform-scaled clamped height 36.0 (40.0 * 0.9), got {}",
                 clamped_rect.height
             );
             let unscaled_clamped = doc
                 .measure_unscaled_rect("clamped-toast")
                 .expect("unscaled rect must resolve");
-            assert!((unscaled_clamped.height - 40.0).abs() < 0.01);
+            assert!(
+                (unscaled_clamped.height - 40.0).abs() < 0.01,
+                "Expected unscaled clamped height 40.0, got {}",
+                unscaled_clamped.height
+            );
 
             let resize_events = Rc::new(RefCell::new(Vec::new()));
             let re_clone = resize_events.clone();
@@ -286,14 +290,22 @@ mod native_tests {
                 "Expected unscaled natural border-box height 136.0 (48 + 60 + 24 + 4), got {natural_h}"
             );
 
-            // Verify clamped 40px box, exact inline style attribute, and animation queue are untouched
+            // Verify clamped 40px box (36px scaled), exact inline style attribute, and animation queue are untouched
             let after_rect = doc
                 .measure_rect("clamped-toast")
                 .expect("clamped-toast must remain measurable");
             assert!(
-                (after_rect.height - 40.0).abs() < 0.01,
-                "Clamped 40px box must remain intact after measure_auto_height, got {}",
+                (after_rect.height - 36.0).abs() < 0.01,
+                "Clamped 40px * 0.9 box must remain intact after measure_auto_height, got {}",
                 after_rect.height
+            );
+            let after_unscaled = doc
+                .measure_unscaled_rect("clamped-toast")
+                .expect("clamped-toast unscaled rect must remain measurable");
+            assert!(
+                (after_unscaled.height - 40.0).abs() < 0.01,
+                "Clamped unscaled 40px box must remain intact after measure_auto_height, got {}",
+                after_unscaled.height
             );
             let clamped_el = doc
                 .element_by_id("clamped-toast")
@@ -315,8 +327,12 @@ mod native_tests {
             // Advance resolve time and verify zero spurious transitions or resize notifications
             doc.resolve(0.1);
             assert!(
-                (doc.measure_rect("clamped-toast").unwrap().height - 40.0).abs() < 0.01,
+                (doc.measure_unscaled_rect("clamped-toast").unwrap().height - 40.0).abs() < 0.01,
                 "Subsequent resolve must keep height clamped at 40px without transitioning"
+            );
+            assert!(
+                (doc.measure_rect("clamped-toast").unwrap().height - 36.0).abs() < 0.01,
+                "Subsequent resolve must keep scaled height at 36px without transitioning"
             );
             assert!(base.borrow().pending_animation_events.is_empty());
             assert!(

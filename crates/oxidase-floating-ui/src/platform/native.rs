@@ -17,49 +17,11 @@ use crate::types::{
 
 static GENERATED_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// Measures the bounding client rectangle of a native node in viewport coordinates.
+/// Measures the bounding client rectangle of a native node in viewport coordinates,
+/// accounting for 2D CSS transforms, `position: fixed`, intermediate scroll offsets, and viewport scroll.
 pub fn measure_node_rect(base: &BaseDocument, node_id: NodeId) -> Option<Rect> {
-    let node = base.get_node(node_id)?;
-    let layout = node.final_layout();
-    let width = layout.size.width as f64;
-    let height = layout.size.height as f64;
-
-    let mut x = layout.location.x as f64;
-    let mut y = layout.location.y as f64;
-
-    let is_target_fixed = node.taffy_position() == blitz_dom::taffy::Position::Fixed;
-    if !is_target_fixed {
-        let root_id = base.root_node().id;
-        let mut current_parent = node.parent;
-        let mut hit_fixed_ancestor = false;
-        while let Some(parent_id) = current_parent {
-            if parent_id == root_id {
-                break;
-            }
-            if let Some(parent_node) = base.get_node(parent_id) {
-                let parent_layout = parent_node.final_layout();
-                if parent_node.taffy_position() == blitz_dom::taffy::Position::Fixed {
-                    x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
-                    y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
-                    hit_fixed_ancestor = true;
-                    break;
-                }
-                x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
-                y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
-                current_parent = parent_node.parent;
-            } else {
-                break;
-            }
-        }
-
-        if !hit_fixed_ancestor {
-            let vp_scroll = base.viewport_scroll();
-            x -= vp_scroll.x;
-            y -= vp_scroll.y;
-        }
-    }
-
-    Some(Rect::new(x, y, width, height))
+    let rect = base.bounding_client_rect(node_id)?;
+    Some(Rect::new(rect.x, rect.y, rect.width, rect.height))
 }
 
 /// Returns the layout dimensions (width, height) of a native node.
@@ -734,5 +696,111 @@ mod tests {
             .get_overflow_ancestors("my-target")
             .expect("must resolve overflow ancestors again");
         assert_eq!(ancestors_again[0], *gen_id, "Generated ID must be stable across queries");
+    }
+
+    #[test]
+    fn test_measure_node_rect_2d_transform_fixed_and_child() {
+        use blitz_dom::{Attribute, QualName, local_name, ns};
+
+        let mut doc = BaseDocument::new(DocumentConfig::default());
+        {
+            let mut vp = doc.viewport_mut();
+            vp.window_size = (1280, 720);
+            vp.hidpi_scale = 1.0;
+        }
+        let doc_root = doc.root_node().id;
+
+        let (wrapper_id, child_id) = {
+            let mut mutator = doc.mutate();
+            let html = mutator.create_element(
+                QualName::new(None, ns!(), local_name!("html")),
+                vec![Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "margin: 0; padding: 0; width: 1280px; height: 2000px; display: block;"
+                        .into(),
+                }],
+            );
+            let body = mutator.create_element(
+                QualName::new(None, ns!(), local_name!("body")),
+                vec![Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "margin: 0; padding: 0; width: 1280px; height: 2000px; display: block;"
+                        .into(),
+                }],
+            );
+            let wrapper = mutator.create_element(
+                QualName::new(None, ns!(), local_name!("div")),
+                vec![
+                    Attribute {
+                        name: QualName::new(None, ns!(), local_name!("id")),
+                        value: "fixed-wrapper".into(),
+                    },
+                    Attribute {
+                        name: QualName::new(None, ns!(), local_name!("style")),
+                        value: "position: fixed; left: 0px; top: 0px; width: 200px; height: 100px; transform: translate(120px, 80px); display: block;".into(),
+                    },
+                ],
+            );
+            let child = mutator.create_element(
+                QualName::new(None, ns!(), local_name!("div")),
+                vec![
+                    Attribute {
+                        name: QualName::new(None, ns!(), local_name!("id")),
+                        value: "fixed-child".into(),
+                    },
+                    Attribute {
+                        name: QualName::new(None, ns!(), local_name!("style")),
+                        value: "position: relative; left: 10px; top: 15px; width: 80px; height: 40px; display: block;".into(),
+                    },
+                ],
+            );
+            mutator.append_children(wrapper, &[child]);
+            mutator.append_children(body, &[wrapper]);
+            mutator.append_children(html, &[body]);
+            mutator.append_children(doc_root, &[html]);
+            (wrapper, child)
+        };
+
+        doc.resolve(0.0);
+
+        let wrapper_rect = measure_node_rect(&doc, wrapper_id).expect("wrapper rect must resolve");
+        assert!(
+            (wrapper_rect.x - 120.0).abs() < 1e-3,
+            "wrapper x: {}",
+            wrapper_rect.x
+        );
+        assert!(
+            (wrapper_rect.y - 80.0).abs() < 1e-3,
+            "wrapper y: {}",
+            wrapper_rect.y
+        );
+        assert!((wrapper_rect.width - 200.0).abs() < 1e-3);
+        assert!((wrapper_rect.height - 100.0).abs() < 1e-3);
+
+        let child_rect = measure_node_rect(&doc, child_id).expect("child rect must resolve");
+        assert!(
+            (child_rect.x - 130.0).abs() < 1e-3,
+            "child x: {}",
+            child_rect.x
+        );
+        assert!(
+            (child_rect.y - 95.0).abs() < 1e-3,
+            "child y: {}",
+            child_rect.y
+        );
+        assert!((child_rect.width - 80.0).abs() < 1e-3);
+        assert!((child_rect.height - 40.0).abs() < 1e-3);
+
+        // Viewport scroll must not shift fixed wrapper or its child in viewport coordinates
+        doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 250.0 });
+        let wrapper_after_scroll =
+            measure_node_rect(&doc, wrapper_id).expect("wrapper rect after scroll");
+        assert!((wrapper_after_scroll.x - 120.0).abs() < 1e-3);
+        assert!((wrapper_after_scroll.y - 80.0).abs() < 1e-3);
+
+        let child_after_scroll =
+            measure_node_rect(&doc, child_id).expect("child rect after scroll");
+        assert!((child_after_scroll.x - 130.0).abs() < 1e-3);
+        assert!((child_after_scroll.y - 95.0).abs() < 1e-3);
     }
 }

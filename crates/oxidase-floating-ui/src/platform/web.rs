@@ -140,26 +140,46 @@ pub fn is_rtl(element: &Element) -> bool {
         .unwrap_or(false)
 }
 
-/// Checks if an element establishes a CSS containing block.
-pub fn is_containing_block(element: &Element) -> bool {
-    let css = match get_computed_style(element) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
+fn is_css_prop_not_none(css: &CssStyleDeclaration, prop: &str) -> bool {
+    css.get_property_value(prop)
+        .ok()
+        .is_some_and(|val| !val.is_empty() && val != "none")
+}
 
-    let transform = css.get_property_value("transform").unwrap_or_default();
-    let perspective = css.get_property_value("perspective").unwrap_or_default();
+fn is_containing_block_from_style(css: &CssStyleDeclaration) -> bool {
     let contain = css.get_property_value("contain").unwrap_or_default();
     let will_change = css.get_property_value("will-change").unwrap_or_default();
 
-    (transform != "none" && !transform.is_empty())
-        || (perspective != "none" && !perspective.is_empty())
-        || contain == "paint"
-        || contain == "layout"
-        || contain == "strict"
-        || contain == "content"
-        || will_change.contains("transform")
-        || will_change.contains("perspective")
+    const WILL_CHANGE_VALUES: [&str; 7] = [
+        "transform",
+        "translate",
+        "scale",
+        "rotate",
+        "perspective",
+        "filter",
+        "backdrop-filter",
+    ];
+
+    is_css_prop_not_none(css, "transform")
+        || is_css_prop_not_none(css, "translate")
+        || is_css_prop_not_none(css, "scale")
+        || is_css_prop_not_none(css, "rotate")
+        || is_css_prop_not_none(css, "perspective")
+        || is_css_prop_not_none(css, "filter")
+        || is_css_prop_not_none(css, "backdrop-filter")
+        || contain
+            .split_whitespace()
+            .any(|tok| matches!(tok, "paint" | "layout" | "strict" | "content"))
+        || WILL_CHANGE_VALUES
+            .iter()
+            .any(|val| will_change.contains(val))
+}
+
+/// Checks if an element establishes a CSS containing block.
+pub fn is_containing_block(element: &Element) -> bool {
+    get_computed_style(element)
+        .map(|css| is_containing_block_from_style(&css))
+        .unwrap_or(false)
 }
 
 /// Resolves the nearest offset parent for an element.
@@ -220,6 +240,65 @@ pub fn get_overflow_ancestors(element: &Element) -> Vec<Element> {
     ancestors
 }
 
+/// Collects overflow ancestors that actually clip `element`, respecting CSS containing-block chains.
+///
+/// Matches Floating UI's `getClippingElementAncestors`: a `position: fixed` element (or any chain
+/// rooted at a `position: fixed` ancestor) escapes non-containing-block overflow ancestors up to
+/// the viewport or the next ancestor establishing a containing block, and a `position: absolute`
+/// chain escapes non-containing `position: static` overflow ancestors.
+pub fn get_clipping_element_ancestors(element: &Element) -> Vec<Element> {
+    let mut result = get_overflow_ancestors(element);
+    if result.is_empty() {
+        return result;
+    }
+
+    let element_is_fixed = get_computed_style(element)
+        .ok()
+        .and_then(|css| css.get_property_value("position").ok())
+        .is_some_and(|position| position == "fixed");
+
+    let mut last_kept_position: Option<String> = None;
+    let mut current: Option<Element> = if element_is_fixed {
+        element.parent_element()
+    } else {
+        Some(element.clone())
+    };
+
+    while let Some(current_element) = current {
+        let tag = current_element.tag_name().to_lowercase();
+        if tag == "html" || tag == "body" {
+            break;
+        }
+
+        let Ok(computed_style) = get_computed_style(&current_element) else {
+            current = current_element.parent_element();
+            continue;
+        };
+        let current_position = computed_style
+            .get_property_value("position")
+            .unwrap_or_default();
+        let current_node_is_containing = is_containing_block_from_style(&computed_style);
+
+        let last_position = last_kept_position
+            .as_deref()
+            .unwrap_or(if element_is_fixed { "fixed" } else { "" });
+
+        let should_drop_current_node = !current_node_is_containing
+            && (last_position == "fixed"
+                || (last_position == "absolute" && current_position == "static"));
+
+        if should_drop_current_node {
+            result.retain(|ancestor| ancestor != &current_element);
+        } else {
+            last_kept_position = Some(current_position);
+        }
+
+        current = current_element.parent_element();
+    }
+
+    result
+}
+
 /// Queries the root viewport rectangle.
 pub fn get_viewport_rect() -> Result<Rect> {
     let win = get_window()?;
@@ -278,7 +357,7 @@ pub fn get_clipping_rect(element: &Element, boundary: Boundary<String>) -> Resul
             Ok(current)
         }
         Boundary::ClippingAncestors => {
-            let ancestors = get_overflow_ancestors(element);
+            let ancestors = get_clipping_element_ancestors(element);
             let mut current = vp_rect;
             for anc in ancestors {
                 let r = anc.get_bounding_client_rect();

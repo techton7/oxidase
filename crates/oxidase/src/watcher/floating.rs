@@ -213,6 +213,28 @@ pub fn watch_floating_auto_update_with_options(
             if s.cancelled {
                 return;
             }
+            #[cfg(target_arch = "wasm32")]
+            if kind == FloatingAutoUpdateEvent::Scroll && !s.is_emitting {
+                if s.pending_trailing == Some(FloatingAutoUpdateEvent::Scroll) {
+                    s.pending_trailing = None;
+                }
+                s.is_emitting = true;
+                drop(s);
+                {
+                    let _guard = EmittingGuard {
+                        state: state.clone(),
+                    };
+                    if let Ok(mut h) = handler.try_borrow_mut() {
+                        h(FloatingAutoUpdateEvent::Scroll);
+                    }
+                }
+                let s = state.borrow();
+                if !s.cancelled && s.pending_trailing.is_some() && s.trailing_guard.is_none() {
+                    drop(s);
+                    schedule_trailing_frame(&state, &handler);
+                }
+                return;
+            }
             merge_event(&mut s.pending_trailing, kind);
             if s.trailing_guard.is_none() {
                 drop(s);

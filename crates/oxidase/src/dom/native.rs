@@ -525,55 +525,21 @@ impl Document {
         }
     }
 
-    /// Measures the bounding client rectangle of an element by ID by accumulating
-    /// layout coordinates over the ancestor hierarchy and accounting for viewport scroll.
+    /// Measures the bounding client rectangle of an element by ID in viewport coordinates,
+    /// accounting for 2D CSS transforms, `position: fixed`, intermediate scroll offsets, and viewport scroll.
     pub fn measure_rect(&self, element_id: &str) -> Option<crate::runtime::geometry::Rect> {
         let base_rc = self.get_base()?;
         let Ok(base) = base_rc.try_borrow() else {
             return None;
         };
         let node_id = base.get_element_by_id(element_id)?;
-        let node = base.get_node(node_id)?;
-        let layout = node.final_layout();
-        let width = layout.size.width as f64;
-        let height = layout.size.height as f64;
-
-        let mut x = layout.location.x as f64;
-        let mut y = layout.location.y as f64;
-
-        let is_target_fixed = node.taffy_position() == blitz_dom::taffy::Position::Fixed;
-        if !is_target_fixed {
-            let root_id = base.root_node().id;
-            let mut current_parent = node.parent;
-            let mut hit_fixed_ancestor = false;
-            while let Some(parent_id) = current_parent {
-                if parent_id == root_id {
-                    break;
-                }
-                if let Some(parent_node) = base.get_node(parent_id) {
-                    let parent_layout = parent_node.final_layout();
-                    if parent_node.taffy_position() == blitz_dom::taffy::Position::Fixed {
-                        x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
-                        y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
-                        hit_fixed_ancestor = true;
-                        break;
-                    }
-                    x += parent_layout.location.x as f64 - parent_node.scroll_offset().x;
-                    y += parent_layout.location.y as f64 - parent_node.scroll_offset().y;
-                    current_parent = parent_node.parent;
-                } else {
-                    break;
-                }
-            }
-
-            if !hit_fixed_ancestor {
-                let vp_scroll = base.viewport_scroll();
-                x -= vp_scroll.x;
-                y -= vp_scroll.y;
-            }
-        }
-
-        Some(crate::runtime::geometry::Rect::new(x, y, width, height))
+        let rect = base.bounding_client_rect(node_id)?;
+        Some(crate::runtime::geometry::Rect::new(
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+        ))
     }
 
     /// Measures the bounding rectangle of an element by ID, adjusting for the specified box model.
@@ -606,12 +572,26 @@ impl Document {
         }
     }
 
-    /// Measures the pre-transform bounding rectangle of an element by ID (`final_layout().size` in Blitz is already unscaled).
+    /// Measures the bounding rectangle of an element by ID with CSS `transform` scale factored out
+    /// of `width`/`height` (`final_layout().size` in Blitz is already unscaled).
     pub fn measure_unscaled_rect(
         &self,
         element_id: &str,
     ) -> Option<crate::runtime::geometry::Rect> {
-        self.measure_rect(element_id)
+        let base_rc = self.get_base()?;
+        let Ok(base) = base_rc.try_borrow() else {
+            return None;
+        };
+        let node_id = base.get_element_by_id(element_id)?;
+        let node = base.get_node(node_id)?;
+        let br = base.bounding_client_rect(node_id)?;
+        let size = node.final_layout().size;
+        Some(crate::runtime::geometry::Rect::new(
+            br.x,
+            br.y,
+            size.width as f64,
+            size.height as f64,
+        ))
     }
 
     /// Measures the unscaled natural `height: auto` border-box height of an element without leaving style or transition side effects.

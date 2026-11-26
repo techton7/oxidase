@@ -573,6 +573,8 @@ impl Document {
 
     /// Teleports a portal element by ID into `host_id` (if non-empty) or falls back to `#main` / `document.body`.
     pub fn teleport_portal_to_host(&self, element_id: &str, host_id: Option<&str>) {
+        use wasm_bindgen::JsCast;
+
         let Some(document) = self
             .doc
             .clone()
@@ -595,7 +597,23 @@ impl Document {
         if let Some(host) = host
             && el.parent_node() != Some(host.clone())
         {
+            let focused_descendant = document
+                .active_element()
+                .filter(|active| el.contains(Some(active.as_ref())))
+                .and_then(|active| {
+                    let active_html = active.clone().dyn_into::<web_sys::HtmlElement>().ok()?;
+                    Some((active, active_html))
+                });
+
             let _ = host.append_child(&el);
+
+            if let Some((active_el, active_html)) = focused_descendant
+                && document.active_element().as_ref() != Some(&active_el)
+            {
+                let opts = web_sys::FocusOptions::new();
+                opts.set_prevent_scroll(true);
+                let _ = active_html.focus_with_options(&opts);
+            }
         }
     }
 
