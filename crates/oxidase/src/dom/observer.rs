@@ -62,6 +62,54 @@ pub enum ResizeObserverBox {
     ContentBox,
 }
 
+/// Bitmask selecting which global capture-phase event categories to subscribe to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct CaptureEventMask(u8);
+
+impl CaptureEventMask {
+    pub const NONE: Self = Self(0);
+    pub const POINTER_DOWN: Self = Self(1 << 0);
+    pub const CLICK: Self = Self(1 << 1);
+    pub const FOCUS_IN: Self = Self(1 << 2);
+    pub const KEY_DOWN: Self = Self(1 << 3);
+    pub const ALL: Self =
+        Self(Self::POINTER_DOWN.0 | Self::CLICK.0 | Self::FOCUS_IN.0 | Self::KEY_DOWN.0);
+
+    /// Returns `true` if all bits in `other` are present in `self`.
+    #[inline]
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    /// Returns `true` if no event categories are enabled.
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Returns the raw bit representation of this mask.
+    #[inline]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+}
+
+impl std::ops::BitOr for CaptureEventMask {
+    type Output = Self;
+
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for CaptureEventMask {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
 /// The kind of global capture interaction intercepted.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CaptureEventKind {
@@ -79,10 +127,22 @@ pub enum CaptureEventKind {
     FocusIn,
     KeyDown {
         key: String,
+        is_composing: bool,
     },
 }
 
 impl CaptureEventKind {
+    /// Returns the single-bit [`CaptureEventMask`] corresponding to this event variant.
+    #[inline]
+    pub const fn mask(&self) -> CaptureEventMask {
+        match self {
+            Self::PointerDown { .. } => CaptureEventMask::POINTER_DOWN,
+            Self::Click { .. } => CaptureEventMask::CLICK,
+            Self::FocusIn => CaptureEventMask::FOCUS_IN,
+            Self::KeyDown { .. } => CaptureEventMask::KEY_DOWN,
+        }
+    }
+
     /// Convenience constructor for a mouse `PointerDown` capture event at `(client_x, client_y)`.
     pub fn mouse_down(client_x: f64, client_y: f64) -> Self {
         Self::PointerDown {
@@ -108,6 +168,14 @@ impl CaptureEventKind {
             detail,
             client_x,
             client_y,
+        }
+    }
+
+    /// Convenience constructor for a non-composing `KeyDown` capture event.
+    pub fn key_down(key: impl Into<String>) -> Self {
+        Self::KeyDown {
+            key: key.into(),
+            is_composing: false,
         }
     }
 }
@@ -163,11 +231,19 @@ pub fn observe_element_resize(
     observe_element_resize_with_box(element_id, ResizeObserverBox::BorderBox, callback)
 }
 
+/// Observes selected global capture-phase interactions across Web and Native hosts.
+pub fn observe_capture_events_with_mask(
+    mask: CaptureEventMask,
+    callback: impl FnMut(CaptureEvent) + 'static,
+) -> Result<WatcherGuard> {
+    crate::dom::backend::observe_capture_events_with_mask(mask, Box::new(callback))
+}
+
 /// Observes global capture-phase interactions across Web and Native hosts.
 pub fn observe_capture_events(
     callback: impl FnMut(CaptureEvent) + 'static,
 ) -> Result<WatcherGuard> {
-    crate::dom::backend::observe_capture_events(Box::new(callback))
+    observe_capture_events_with_mask(CaptureEventMask::ALL, callback)
 }
 
 /// Observes transition and animation lifecycle for an element, including resolved-state fallbacks.

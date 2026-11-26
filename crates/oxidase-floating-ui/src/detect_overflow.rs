@@ -128,7 +128,7 @@ pub fn detect_overflow<Element: Clone + 'static, Window: Clone + 'static>(
             context_element
                 .as_ref()
                 .or(document_element.as_ref())
-                .expect("Element should exist.")
+                .unwrap_or(elements.floating)
         }
     };
 

@@ -413,12 +413,8 @@ fn test_watch_document_dismiss_boundary_filtering() {
         }
 
         // 3. Escape key -> triggers dismiss unconditionally
-        ctx.doc.dispatch_capture_event(
-            CaptureEventKind::KeyDown {
-                key: "Escape".into(),
-            },
-            outside_btn_id,
-        );
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::key_down("Escape"), outside_btn_id);
         assert_eq!(dismiss_events.borrow().len(), 2);
         assert_eq!(dismiss_events.borrow()[1], DismissEvent::Escape);
     });
@@ -2342,5 +2338,375 @@ fn test_temporary_document_from_base_drop_does_not_kill_capture_hook() {
         // A second round of transient handles after events have flowed must not reset state either.
         drop(Document::from_base(ctx.base.clone()));
         assert_capture_hook_alive(&ctx, &probes);
+    });
+}
+
+// FM-OX-1: WatcherGuard::drop skips dispatch_cleanup for custom_cleanup & sub_id == 0,
+// while preserving dispatch_cleanup for macro-created WatcherGuard::new(_, sub_id > 0, _).
+#[test]
+fn test_fm_ox_1_watcher_guard_eval_skip() {
+    let ctx = TestContext::new();
+    let custom_ran = Rc::new(std::cell::Cell::new(false));
+    let custom_ran_clone = custom_ran.clone();
+
+    let before = oxidase::internal::dispatch_cleanup_call_count();
+    let custom_guard = WatcherGuard::with_cleanup("fm_ox_1_custom", 999, None, move || {
+        custom_ran_clone.set(true);
+    });
+    drop(custom_guard);
+    assert!(custom_ran.get(), "custom cleanup closure must run on drop");
+    assert_eq!(
+        oxidase::internal::dispatch_cleanup_call_count(),
+        before,
+        "WatcherGuard::with_cleanup must never invoke dispatch_cleanup"
+    );
+
+    let zero_guard = WatcherGuard::new("fm_ox_1_zero", 0, None);
+    drop(zero_guard);
+    assert_eq!(
+        oxidase::internal::dispatch_cleanup_call_count(),
+        before,
+        "WatcherGuard::new with sub_id == 0 must never invoke dispatch_cleanup"
+    );
+
+    drop(WatcherGuard::noop());
+    assert_eq!(
+        oxidase::internal::dispatch_cleanup_call_count(),
+        before,
+        "WatcherGuard::noop must never invoke dispatch_cleanup"
+    );
+
+    // Non-macro noop early-return in watch_presence (missing element) must use sub_id == 0.
+    Document::with_current(ctx.doc.clone(), || {
+        let missing_guard = watch_presence("nonexistent-fm-ox-1", 1, |_| {})
+            .expect("watch_presence missing fallback must succeed");
+        assert_eq!(
+            missing_guard.subscription_id(),
+            0,
+            "watch_presence missing early return must assign sub_id == 0"
+        );
+        drop(missing_guard);
+        assert_eq!(
+            oxidase::internal::dispatch_cleanup_call_count(),
+            before,
+            "watch_presence missing early-return guard must not invoke dispatch_cleanup"
+        );
+    });
+
+    // Macro-style WatcherGuard::new(_, sub_id > 0, _) must still invoke dispatch_cleanup once.
+    let macro_guard = WatcherGuard::new("fm_ox_1_macro", 42, None);
+    drop(macro_guard);
+    assert_eq!(
+        oxidase::internal::dispatch_cleanup_call_count(),
+        before + 1,
+        "WatcherGuard::new(_, sub_id > 0, _) must invoke dispatch_cleanup"
+    );
+}
+
+// FM-OX-2: Re-entrancy-safe observer callbacks (self-drop inside callback produces zero BorrowMutError).
+#[test]
+fn test_fm_ox_2_observer_self_drop_reentrancy_safe() {
+    let ctx = TestContext::new();
+    let btn_id = ctx.add_element(ctx.root_id, "button", "reentrant-btn", 10.0, 10.0, 80.0, 30.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let guard_slot: Rc<RefCell<Option<WatcherGuard>>> = Rc::new(RefCell::new(None));
+        let fires = Rc::new(std::cell::Cell::new(0usize));
+
+        let slot_cb = guard_slot.clone();
+        let fires_cb = fires.clone();
+        let guard = observe_capture_events(move |_ev| {
+            fires_cb.set(fires_cb.get() + 1);
+            // Drop the owning WatcherGuard synchronously inside its own observer callback.
+            let _ = slot_cb.borrow_mut().take();
+        })
+        .expect("observe_capture_events must succeed");
+        *guard_slot.borrow_mut() = Some(guard);
+
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(15.0, 15.0), btn_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(15.0, 15.0), btn_id);
+
+        assert_eq!(
+            fires.get(),
+            1,
+            "Self-dropping observer inside callback must succeed cleanly and suppress subsequent events"
+        );
+    });
+}
+
+// FM-OX-4: Resize observation supports multiple subscribers on the same element (BorderBox & ContentBox)
+// and handles self-drop inside callback without RefCell borrow panic.
+#[test]
+fn test_fm_ox_4_resize_multi_subscriber_and_self_drop() {
+    use oxidase::dom::observer::{ResizeObserverBox, observe_element_resize_with_box};
+
+    let ctx = TestContext::new();
+    let box_id = ctx.add_element(ctx.root_id, "div", "pooled-box", 0.0, 0.0, 100.0, 80.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let guard_a: Rc<RefCell<Option<WatcherGuard>>> = Rc::new(RefCell::new(None));
+        let count_a = Rc::new(std::cell::Cell::new(0usize));
+        let count_b = Rc::new(std::cell::Cell::new(0usize));
+
+        let ga_cb = guard_a.clone();
+        let ca_cb = count_a.clone();
+        *guard_a.borrow_mut() = Some(
+            observe_element_resize_with_box("pooled-box", ResizeObserverBox::BorderBox, move |_| {
+                ca_cb.set(ca_cb.get() + 1);
+                // Self-drop inside callback.
+                let _ = ga_cb.borrow_mut().take();
+            })
+            .expect("subscriber A must register"),
+        );
+
+        let cb_cb = count_b.clone();
+        let _guard_b =
+            observe_element_resize_with_box("pooled-box", ResizeObserverBox::ContentBox, move |_| {
+                cb_cb.set(cb_cb.get() + 1);
+            })
+            .expect("subscriber B must register");
+
+        ctx.update_element_layout(box_id, 0.0, 0.0, 200.0, 120.0);
+        ctx.doc.notify_layout_observers();
+        assert_eq!(count_a.get(), 1);
+        assert_eq!(count_b.get(), 1);
+
+        // Second resize must reach only surviving subscriber B.
+        ctx.update_element_layout(box_id, 0.0, 0.0, 260.0, 150.0);
+        ctx.doc.notify_layout_observers();
+        assert_eq!(count_a.get(), 1);
+        assert_eq!(count_b.get(), 2);
+    });
+}
+
+// FM-OX-5: observe_capture_events_with_mask filters event categories accurately and
+// watch_document_dismiss_with_options subscribes only to its minimal mask.
+#[test]
+fn test_fm_ox_5_capture_event_mask_filtering() {
+    use oxidase::dom::{CaptureEventMask, observe_capture_events_with_mask};
+
+    let ctx = TestContext::new();
+    let target_id = ctx.add_element(ctx.root_id, "button", "mask-target", 10.0, 10.0, 80.0, 30.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        // Mask algebra checks
+        assert!(CaptureEventMask::ALL.contains(CaptureEventMask::POINTER_DOWN));
+        assert!(CaptureEventMask::ALL.contains(CaptureEventMask::CLICK));
+        assert!(CaptureEventMask::ALL.contains(CaptureEventMask::FOCUS_IN));
+        assert!(CaptureEventMask::ALL.contains(CaptureEventMask::KEY_DOWN));
+        let combined = CaptureEventMask::FOCUS_IN | CaptureEventMask::KEY_DOWN;
+        assert!(combined.contains(CaptureEventMask::FOCUS_IN));
+        assert!(combined.contains(CaptureEventMask::KEY_DOWN));
+        assert!(!combined.contains(CaptureEventMask::POINTER_DOWN));
+
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let rec = received.clone();
+        let _guard = observe_capture_events_with_mask(CaptureEventMask::FOCUS_IN, move |ev| {
+            rec.borrow_mut().push(ev.kind);
+        })
+        .expect("masked capture observer must succeed");
+
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(15.0, 15.0), target_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::click(true, 1, 15.0, 15.0), target_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::key_down("Escape"), target_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::FocusIn, target_id);
+
+        assert_eq!(
+            *received.borrow(),
+            vec![CaptureEventKind::FocusIn],
+            "observe_capture_events_with_mask(FOCUS_IN) must deliver only FocusIn"
+        );
+
+        // Empty mask returns sub_id == 0 noop guard and delivers nothing.
+        let empty_fired = Rc::new(std::cell::Cell::new(false));
+        let ef = empty_fired.clone();
+        let empty_guard = observe_capture_events_with_mask(CaptureEventMask::NONE, move |_| {
+            ef.set(true);
+        })
+        .expect("empty mask observer must succeed");
+        assert_eq!(empty_guard.subscription_id(), 0);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::FocusIn, target_id);
+        assert!(!empty_fired.get());
+        drop(empty_guard);
+
+        // watch_document_dismiss_with_options with only listen_focusin ignores pointer/escape.
+        let dismiss_log = Rc::new(RefCell::new(Vec::new()));
+        let dl = dismiss_log.clone();
+        let _dismiss_guard = oxidase::watcher::watch_document_dismiss_with_options(
+            DismissOptions {
+                boundary_ids: vec!["other-boundary".into()],
+                listen_escape: false,
+                listen_pointer: false,
+                listen_focusin: true,
+            },
+            move |ev| {
+                dl.borrow_mut().push(ev);
+            },
+        )
+        .expect("watch_document_dismiss_with_options must succeed");
+
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::mouse_down(15.0, 15.0), target_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::key_down("Escape"), target_id);
+        ctx.doc
+            .dispatch_capture_event(CaptureEventKind::FocusIn, target_id);
+
+        assert_eq!(dismiss_log.borrow().len(), 1);
+        assert!(matches!(
+            dismiss_log.borrow()[0],
+            DismissEvent::FocusIn { .. }
+        ));
+    });
+}
+
+// FM-OX-6: IME is_composing propagation on KeyDown capture, Escape dismiss suppression,
+// Process key detection, and Enter armed_key_click guard.
+#[test]
+fn test_fm_ox_6_ime_is_composing_capture_dismiss_and_enter_guard() {
+    let ctx = TestContext::new();
+    let _box_id = ctx.add_element(ctx.root_id, "div", "ime-dialog", 10.0, 10.0, 200.0, 200.0);
+    let btn_id = ctx.add_element(ctx.root_id, "button", "ime-btn", 250.0, 250.0, 80.0, 30.0);
+    ctx.doc.resolve(0.0);
+
+    Document::with_current(ctx.doc.clone(), || {
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let dismissed = Rc::new(RefCell::new(Vec::new()));
+
+        let cap_cb = captured.clone();
+        let _cap_guard = observe_capture_events(move |ev| {
+            cap_cb.borrow_mut().push(ev.kind);
+        })
+        .expect("observe_capture_events must succeed");
+
+        let dis_cb = dismissed.clone();
+        let _dis_guard = watch_document_dismiss(&["ime-dialog"], move |ev| {
+            dis_cb.borrow_mut().push(ev);
+        })
+        .expect("watch_document_dismiss must succeed");
+
+        // 1. Escape with is_composing: true -> capture sees is_composing=true, dismiss ignores it.
+        ctx.doc.handle_ui_event(UiEvent::KeyDown(BlitzKeyEvent {
+            key: Key::Named(NamedKey::Escape),
+            code: Code::Escape,
+            modifiers: Modifiers::empty(),
+            location: Location::Standard,
+            is_auto_repeating: false,
+            is_composing: true,
+            state: KeyState::Pressed,
+            text: None,
+        }));
+        assert_eq!(
+            captured.borrow().last(),
+            Some(&CaptureEventKind::KeyDown {
+                key: "Escape".to_string(),
+                is_composing: true,
+            })
+        );
+        assert!(
+            dismissed.borrow().is_empty(),
+            "Composing Escape must NOT emit DismissEvent::Escape"
+        );
+
+        // 2. NamedKey::Process with is_composing: false -> normalized to is_composing=true.
+        ctx.doc.handle_ui_event(UiEvent::KeyDown(BlitzKeyEvent {
+            key: Key::Named(NamedKey::Process),
+            code: Code::Unidentified,
+            modifiers: Modifiers::empty(),
+            location: Location::Standard,
+            is_auto_repeating: false,
+            is_composing: false,
+            state: KeyState::Pressed,
+            text: None,
+        }));
+        assert_eq!(
+            captured.borrow().last(),
+            Some(&CaptureEventKind::KeyDown {
+                key: "Process".to_string(),
+                is_composing: true,
+            })
+        );
+        assert!(dismissed.borrow().is_empty());
+
+        // 3. Non-composing Escape -> capture sees is_composing=false AND dismiss emits Escape.
+        ctx.doc.handle_ui_event(UiEvent::KeyDown(BlitzKeyEvent {
+            key: Key::Named(NamedKey::Escape),
+            code: Code::Escape,
+            modifiers: Modifiers::empty(),
+            location: Location::Standard,
+            is_auto_repeating: false,
+            is_composing: false,
+            state: KeyState::Pressed,
+            text: None,
+        }));
+        assert_eq!(
+            captured.borrow().last(),
+            Some(&CaptureEventKind::KeyDown {
+                key: "Escape".to_string(),
+                is_composing: false,
+            })
+        );
+        assert_eq!(*dismissed.borrow(), vec![DismissEvent::Escape]);
+
+        // 4. Enter with is_composing: true must NOT arm armed_key_click.
+        ctx.doc.handle_ui_event(UiEvent::KeyDown(BlitzKeyEvent {
+            key: Key::Named(NamedKey::Enter),
+            code: Code::Enter,
+            modifiers: Modifiers::empty(),
+            location: Location::Standard,
+            is_auto_repeating: false,
+            is_composing: true,
+            state: KeyState::Pressed,
+            text: None,
+        }));
+        let btn_el = ctx.doc.element_by_id("ime-btn").expect("ime-btn must exist");
+        btn_el.click_sync().expect("click_sync must succeed");
+        flush_pending_events(&ctx);
+        assert!(
+            matches!(
+                captured.borrow().last(),
+                Some(CaptureEventKind::Click {
+                    is_trusted: false,
+                    detail: 0,
+                    ..
+                })
+            ),
+            "Composing Enter must NOT arm armed_key_click; got {:?}",
+            captured.borrow().last()
+        );
+
+        // 5. Non-composing Enter DOES arm armed_key_click -> subsequent click is trusted with detail=0.
+        ctx.doc.handle_ui_event(UiEvent::KeyDown(BlitzKeyEvent {
+            key: Key::Named(NamedKey::Enter),
+            code: Code::Enter,
+            modifiers: Modifiers::empty(),
+            location: Location::Standard,
+            is_auto_repeating: false,
+            is_composing: false,
+            state: KeyState::Pressed,
+            text: None,
+        }));
+        let _ = btn_id;
+        btn_el.click_sync().expect("click_sync must succeed");
+        flush_pending_events(&ctx);
+        assert!(
+            matches!(
+                captured.borrow().last(),
+                Some(CaptureEventKind::Click {
+                    is_trusted: true,
+                    detail: 0,
+                    ..
+                })
+            ),
+            "Non-composing Enter must arm armed_key_click; got {:?}",
+            captured.borrow().last()
+        );
     });
 }

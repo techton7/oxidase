@@ -658,6 +658,247 @@ impl Document {
     }
 }
 
+struct ResizeSubscriber {
+    target_id: String,
+    active: std::cell::Cell<bool>,
+    pending_entry: std::cell::RefCell<Option<crate::dom::observer::ResizeEntry>>,
+    frame_guard: std::cell::RefCell<Option<crate::frame::FrameRequestGuard>>,
+    callback: std::cell::RefCell<Box<dyn FnMut(crate::dom::observer::ResizeEntry) + 'static>>,
+}
+
+struct PooledTarget {
+    element: web_sys::Element,
+    subscribers: Vec<(u64, std::rc::Rc<ResizeSubscriber>)>,
+}
+
+struct BoxPool {
+    box_model: crate::dom::observer::ResizeObserverBox,
+    observer: Option<web_sys::ResizeObserver>,
+    js_cb: Option<wasm_bindgen::closure::Closure<dyn Fn(js_sys::Array)>>,
+    element_keys: js_sys::Map,
+    next_target_key: u64,
+    targets: std::collections::HashMap<u64, PooledTarget>,
+}
+
+impl BoxPool {
+    fn new(box_model: crate::dom::observer::ResizeObserverBox) -> Self {
+        Self {
+            box_model,
+            observer: None,
+            js_cb: None,
+            element_keys: js_sys::Map::new(),
+            next_target_key: 1,
+            targets: std::collections::HashMap::new(),
+        }
+    }
+
+    fn observer_options(&self) -> web_sys::ResizeObserverOptions {
+        let options = web_sys::ResizeObserverOptions::new();
+        match self.box_model {
+            crate::dom::observer::ResizeObserverBox::BorderBox => {
+                options.set_box(web_sys::ResizeObserverBoxOptions::BorderBox);
+            }
+            crate::dom::observer::ResizeObserverBox::ContentBox => {
+                options.set_box(web_sys::ResizeObserverBoxOptions::ContentBox);
+            }
+        }
+        options
+    }
+}
+
+struct ResizePools {
+    border_box: BoxPool,
+    content_box: BoxPool,
+}
+
+impl ResizePools {
+    fn new() -> Self {
+        Self {
+            border_box: BoxPool::new(crate::dom::observer::ResizeObserverBox::BorderBox),
+            content_box: BoxPool::new(crate::dom::observer::ResizeObserverBox::ContentBox),
+        }
+    }
+
+    fn pool(&self, box_model: crate::dom::observer::ResizeObserverBox) -> &BoxPool {
+        match box_model {
+            crate::dom::observer::ResizeObserverBox::BorderBox => &self.border_box,
+            crate::dom::observer::ResizeObserverBox::ContentBox => &self.content_box,
+        }
+    }
+
+    fn pool_mut(&mut self, box_model: crate::dom::observer::ResizeObserverBox) -> &mut BoxPool {
+        match box_model {
+            crate::dom::observer::ResizeObserverBox::BorderBox => &mut self.border_box,
+            crate::dom::observer::ResizeObserverBox::ContentBox => &mut self.content_box,
+        }
+    }
+}
+
+std::thread_local! {
+    static RESIZE_POOLS: std::cell::RefCell<ResizePools> =
+        std::cell::RefCell::new(ResizePools::new());
+}
+
+fn extract_resize_rect(
+    entry: &web_sys::ResizeObserverEntry,
+    target: &web_sys::Element,
+    box_model: crate::dom::observer::ResizeObserverBox,
+) -> crate::runtime::geometry::Rect {
+    use wasm_bindgen::JsCast;
+
+    match box_model {
+        crate::dom::observer::ResizeObserverBox::BorderBox => {
+            let bbs = entry.border_box_size();
+            let (w, h) = if bbs.length() > 0 {
+                if let Ok(size) = bbs.get(0).dyn_into::<web_sys::ResizeObserverSize>() {
+                    (size.inline_size(), size.block_size())
+                } else {
+                    let cr = entry.content_rect();
+                    (cr.width(), cr.height())
+                }
+            } else if let Ok(html_el) = target.clone().dyn_into::<web_sys::HtmlElement>() {
+                let ow = html_el.offset_width() as f64;
+                let oh = html_el.offset_height() as f64;
+                if ow > 0.0 || oh > 0.0 {
+                    (ow, oh)
+                } else {
+                    let cr = entry.content_rect();
+                    (cr.width(), cr.height())
+                }
+            } else {
+                let cr = entry.content_rect();
+                (cr.width(), cr.height())
+            };
+            let cr = entry.content_rect();
+            crate::runtime::geometry::Rect::new(cr.x(), cr.y(), w, h)
+        }
+        crate::dom::observer::ResizeObserverBox::ContentBox => {
+            let cr = entry.content_rect();
+            crate::runtime::geometry::Rect::new(cr.x(), cr.y(), cr.width(), cr.height())
+        }
+    }
+}
+
+fn dispatch_resize_entries(
+    box_model: crate::dom::observer::ResizeObserverBox,
+    entries: js_sys::Array,
+) {
+    use std::rc::Rc;
+    use wasm_bindgen::JsCast;
+
+    for idx in 0..entries.length() {
+        let Ok(entry) = entries.get(idx).dyn_into::<web_sys::ResizeObserverEntry>() else {
+            continue;
+        };
+        let target = entry.target();
+        let rect = extract_resize_rect(&entry, &target, box_model);
+
+        let subscribers: Vec<Rc<ResizeSubscriber>> = RESIZE_POOLS.with(|cell| {
+            let Ok(pools) = cell.try_borrow() else {
+                return Vec::new();
+            };
+            let pool = pools.pool(box_model);
+            let Some(target_key) = pool
+                .element_keys
+                .get(target.as_ref())
+                .as_f64()
+                .map(|k| k as u64)
+            else {
+                return Vec::new();
+            };
+            let Some(pooled) = pool.targets.get(&target_key) else {
+                return Vec::new();
+            };
+            pooled
+                .subscribers
+                .iter()
+                .filter(|(_, sub)| sub.active.get())
+                .map(|(_, sub)| Rc::clone(sub))
+                .collect()
+        });
+
+        for sub in subscribers {
+            if !sub.active.get() {
+                continue;
+            }
+            if let Ok(mut pending) = sub.pending_entry.try_borrow_mut() {
+                *pending = Some(crate::dom::observer::ResizeEntry {
+                    target_id: sub.target_id.clone(),
+                    content_rect: rect,
+                });
+            }
+            let needs_schedule = sub.frame_guard.try_borrow().is_ok_and(|g| g.is_none());
+            if needs_schedule {
+                let sub_for_frame = Rc::clone(&sub);
+                if let Ok(guard) = crate::frame::request_next_frame(move |_| {
+                    if let Ok(mut fg) = sub_for_frame.frame_guard.try_borrow_mut() {
+                        *fg = None;
+                    }
+                    if !sub_for_frame.active.get() {
+                        return;
+                    }
+                    let entry = sub_for_frame
+                        .pending_entry
+                        .try_borrow_mut()
+                        .ok()
+                        .and_then(|mut p| p.take());
+                    if let Some(entry) = entry
+                        && let Ok(mut cb) = sub_for_frame.callback.try_borrow_mut()
+                    {
+                        cb(entry);
+                    }
+                }) {
+                    if sub.active.get()
+                        && let Ok(mut fg) = sub.frame_guard.try_borrow_mut()
+                    {
+                        *fg = Some(guard);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn unsubscribe_resize_pool(
+    box_model: crate::dom::observer::ResizeObserverBox,
+    target_key: u64,
+    sub_id: u64,
+) {
+    let torn_down = RESIZE_POOLS.with(|cell| {
+        let Ok(mut pools) = cell.try_borrow_mut() else {
+            return None;
+        };
+        let pool = pools.pool_mut(box_model);
+        let mut remove_target = false;
+        if let Some(pooled) = pool.targets.get_mut(&target_key) {
+            pooled.subscribers.retain(|(id, _)| *id != sub_id);
+            remove_target = pooled.subscribers.is_empty();
+        }
+        if remove_target
+            && let Some(removed) = pool.targets.remove(&target_key)
+        {
+            if let Some(observer) = pool.observer.as_ref() {
+                observer.unobserve(&removed.element);
+            }
+            pool.element_keys.delete(removed.element.as_ref());
+        }
+        if pool.targets.is_empty() {
+            let observer = pool.observer.take();
+            let js_cb = pool.js_cb.take();
+            Some((observer, js_cb))
+        } else {
+            None
+        }
+    });
+
+    if let Some((observer, js_cb)) = torn_down {
+        if let Some(observer) = observer {
+            observer.disconnect();
+        }
+        drop(js_cb);
+    }
+}
+
 pub(crate) fn observe_element_resize_with_box(
     element_id: &str,
     box_model: crate::dom::observer::ResizeObserverBox,
@@ -678,127 +919,75 @@ pub(crate) fn observe_element_resize_with_box(
         .get_element_by_id(element_id)
         .ok_or_else(|| crate::error::Error::ElementNotFound(element_id.to_string()))?;
 
-    let tid = element_id.to_string();
-    let pending_raf: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
-    let pending_entry: Rc<RefCell<Option<crate::dom::observer::ResizeEntry>>> =
-        Rc::new(RefCell::new(None));
-    let cb_holder = Rc::new(RefCell::new(callback));
-
-    let pending_raf_for_raf = Rc::clone(&pending_raf);
-    let pending_entry_for_raf = Rc::clone(&pending_entry);
-    let cb_for_raf = Rc::clone(&cb_holder);
-
-    let raf_cb = Closure::<dyn FnMut()>::new(move || {
-        pending_raf_for_raf.set(None);
-        if let Some(entry) = pending_entry_for_raf.borrow_mut().take() {
-            if let Ok(mut cb) = cb_for_raf.try_borrow_mut() {
-                cb(entry);
-            }
-        }
+    let subscriber = Rc::new(ResizeSubscriber {
+        target_id: element_id.to_string(),
+        active: Cell::new(true),
+        pending_entry: RefCell::new(None),
+        frame_guard: RefCell::new(None),
+        callback: RefCell::new(callback),
     });
 
-    let raf_fn: js_sys::Function = raf_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    let target_key = RESIZE_POOLS.with(|cell| -> crate::error::Result<u64> {
+        let mut pools = cell
+            .try_borrow_mut()
+            .map_err(|_| crate::error::Error::Unsupported("ResizeObserver pool busy".into()))?;
+        let pool = pools.pool_mut(box_model);
 
-    let win_for_obs = win.clone();
-    let tid_for_obs = tid.clone();
-    let target_for_obs = target_el.clone();
-    let pending_raf_for_obs = Rc::clone(&pending_raf);
-    let pending_entry_for_obs = Rc::clone(&pending_entry);
-
-    let js_cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
-        if entries.length() == 0 {
-            return;
+        if pool.observer.is_none() {
+            let js_cb = Closure::<dyn Fn(js_sys::Array)>::new(move |entries: js_sys::Array| {
+                dispatch_resize_entries(box_model, entries);
+            });
+            let observer = web_sys::ResizeObserver::new(js_cb.as_ref().unchecked_ref())
+                .map_err(|e| crate::error::Error::Unsupported(format!("{:?}", e)))?;
+            pool.observer = Some(observer);
+            pool.js_cb = Some(js_cb);
         }
-        let Some(first_val) = entries
-            .get(0)
-            .dyn_into::<web_sys::ResizeObserverEntry>()
-            .ok()
-        else {
-            return;
-        };
 
-        let rect = match box_model {
-            crate::dom::observer::ResizeObserverBox::BorderBox => {
-                let bbs = first_val.border_box_size();
-                let (w, h) = if bbs.length() > 0 {
-                    if let Ok(size) = bbs.get(0).dyn_into::<web_sys::ResizeObserverSize>() {
-                        (size.inline_size(), size.block_size())
-                    } else {
-                        let cr = first_val.content_rect();
-                        (cr.width(), cr.height())
-                    }
-                } else if let Ok(html_el) =
-                    target_for_obs.clone().dyn_into::<web_sys::HtmlElement>()
-                {
-                    let ow = html_el.offset_width() as f64;
-                    let oh = html_el.offset_height() as f64;
-                    if ow > 0.0 || oh > 0.0 {
-                        (ow, oh)
-                    } else {
-                        let cr = first_val.content_rect();
-                        (cr.width(), cr.height())
-                    }
-                } else {
-                    let cr = first_val.content_rect();
-                    (cr.width(), cr.height())
-                };
-                crate::runtime::geometry::Rect::new(
-                    first_val.content_rect().x(),
-                    first_val.content_rect().y(),
-                    w,
-                    h,
-                )
+        let options = pool.observer_options();
+        let el_js: &wasm_bindgen::JsValue = target_el.as_ref();
+        let existing_key = pool.element_keys.get(el_js).as_f64().map(|k| k as u64);
+
+        if let Some(key) = existing_key
+            && let Some(pooled) = pool.targets.get_mut(&key)
+        {
+            pooled.subscribers.push((sub_id, Rc::clone(&subscriber)));
+            if let Some(observer) = pool.observer.as_ref() {
+                observer.unobserve(&target_el);
+                observer.observe_with_options(&target_el, &options);
             }
-            crate::dom::observer::ResizeObserverBox::ContentBox => {
-                let cr = first_val.content_rect();
-                crate::runtime::geometry::Rect::new(cr.x(), cr.y(), cr.width(), cr.height())
+            Ok(key)
+        } else {
+            let key = pool.next_target_key;
+            pool.next_target_key = pool.next_target_key.wrapping_add(1);
+            pool.element_keys
+                .set(el_js, &wasm_bindgen::JsValue::from_f64(key as f64));
+            pool.targets.insert(
+                key,
+                PooledTarget {
+                    element: target_el.clone(),
+                    subscribers: vec![(sub_id, Rc::clone(&subscriber))],
+                },
+            );
+            if let Some(observer) = pool.observer.as_ref() {
+                observer.observe_with_options(&target_el, &options);
             }
-        };
-
-        *pending_entry_for_obs.borrow_mut() = Some(crate::dom::observer::ResizeEntry {
-            target_id: tid_for_obs.clone(),
-            content_rect: rect,
-        });
-
-        if let Some(prev_raf) = pending_raf_for_obs.get() {
-            let _ = win_for_obs.cancel_animation_frame(prev_raf);
-            pending_raf_for_obs.set(None);
+            Ok(key)
         }
-
-        if let Ok(raf_id) = win_for_obs.request_animation_frame(&raf_fn) {
-            pending_raf_for_obs.set(Some(raf_id));
-        }
-    });
-
-    let observer = web_sys::ResizeObserver::new(js_cb.as_ref().unchecked_ref())
-        .map_err(|e| crate::error::Error::Unsupported(format!("{:?}", e)))?;
-
-    let options = web_sys::ResizeObserverOptions::new();
-    match box_model {
-        crate::dom::observer::ResizeObserverBox::BorderBox => {
-            options.set_box(web_sys::ResizeObserverBoxOptions::BorderBox);
-        }
-        crate::dom::observer::ResizeObserverBox::ContentBox => {
-            options.set_box(web_sys::ResizeObserverBoxOptions::ContentBox);
-        }
-    }
-    observer.observe_with_options(&target_el, &options);
-
-    let win_for_cleanup = win.clone();
-    let pending_raf_for_cleanup = Rc::clone(&pending_raf);
+    })?;
 
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
         "web_resize_observer",
         sub_id,
         None,
         move || {
-            if let Some(raf_id) = pending_raf_for_cleanup.get() {
-                let _ = win_for_cleanup.cancel_animation_frame(raf_id);
-                pending_raf_for_cleanup.set(None);
+            subscriber.active.set(false);
+            if let Ok(mut pending) = subscriber.pending_entry.try_borrow_mut() {
+                *pending = None;
             }
-            observer.disconnect();
-            drop(raf_cb);
-            drop(js_cb);
+            if let Ok(mut fg) = subscriber.frame_guard.try_borrow_mut() {
+                *fg = None;
+            }
+            unsubscribe_resize_pool(box_model, target_key, sub_id);
         },
     ))
 }
@@ -815,11 +1004,21 @@ pub(crate) fn observe_element_resize(
     )
 }
 
-pub(crate) fn observe_capture_events(
+pub(crate) fn observe_capture_events_with_mask(
+    mask: crate::dom::observer::CaptureEventMask,
     callback: Box<dyn FnMut(crate::dom::observer::CaptureEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    use crate::dom::observer::CaptureEventMask;
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
+
+    if mask.is_empty() {
+        return Ok(crate::watcher_guard::WatcherGuard::new(
+            "web_capture_observer_noop",
+            0,
+            None,
+        ));
+    }
 
     let sub_id = crate::internal::next_subscription_id();
     let win =
@@ -844,96 +1043,117 @@ pub(crate) fn observe_capture_events(
 
     let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
 
-    let cb_pointer = cb_cell.clone();
-    let pointer_handler =
-        Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
-            let path_ids = read_path_ids(&event);
-            let target_id = path_ids.first().cloned();
-            if let Ok(mut cb) = cb_pointer.try_borrow_mut() {
-                cb(crate::dom::observer::CaptureEvent {
-                    kind: crate::dom::observer::CaptureEventKind::PointerDown {
-                        pointer_type: event.pointer_type(),
-                        client_x: f64::from(event.client_x()),
-                        client_y: f64::from(event.client_y()),
-                    },
-                    target_id,
-                    path_ids,
-                });
-            }
-        });
-
-    let cb_click = cb_cell.clone();
-    let click_handler =
-        Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |event: web_sys::MouseEvent| {
-            let path_ids = read_path_ids(&event);
-            let target_id = path_ids.first().cloned();
-            if let Ok(mut cb) = cb_click.try_borrow_mut() {
-                cb(crate::dom::observer::CaptureEvent {
-                    kind: crate::dom::observer::CaptureEventKind::Click {
-                        is_trusted: event.is_trusted(),
-                        detail: event.detail(),
-                        client_x: f64::from(event.client_x()),
-                        client_y: f64::from(event.client_y()),
-                    },
-                    target_id,
-                    path_ids,
-                });
-            }
-        });
-
-    let cb_focus = cb_cell.clone();
-    let focus_handler =
-        Closure::<dyn FnMut(web_sys::FocusEvent)>::new(move |event: web_sys::FocusEvent| {
-            let path_ids = read_path_ids(&event);
-            let target_id = path_ids.first().cloned();
-            if let Ok(mut cb) = cb_focus.try_borrow_mut() {
-                cb(crate::dom::observer::CaptureEvent {
-                    kind: crate::dom::observer::CaptureEventKind::FocusIn,
-                    target_id,
-                    path_ids,
-                });
-            }
-        });
-
-    let cb_key = cb_cell.clone();
-    let key_handler =
-        Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |event: web_sys::KeyboardEvent| {
-            let key = event.key();
-            let path_ids = read_path_ids(&event);
-            let target_id = path_ids.first().cloned();
-            if let Ok(mut cb) = cb_key.try_borrow_mut() {
-                cb(crate::dom::observer::CaptureEvent {
-                    kind: crate::dom::observer::CaptureEventKind::KeyDown { key },
-                    target_id,
-                    path_ids,
-                });
-            }
-        });
-
     let capture_opts = web_sys::AddEventListenerOptions::new();
     capture_opts.set_capture(true);
-
     let doc_target: web_sys::EventTarget = doc.clone().into();
-    let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
-        "pointerdown",
-        pointer_handler.as_ref().unchecked_ref(),
-        &capture_opts,
-    );
-    let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
-        "click",
-        click_handler.as_ref().unchecked_ref(),
-        &capture_opts,
-    );
-    let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
-        "focusin",
-        focus_handler.as_ref().unchecked_ref(),
-        &capture_opts,
-    );
-    let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
-        "keydown",
-        key_handler.as_ref().unchecked_ref(),
-        &capture_opts,
-    );
+
+    let pointer_handler = if mask.contains(CaptureEventMask::POINTER_DOWN) {
+        let cb_pointer = cb_cell.clone();
+        let handler =
+            Closure::<dyn Fn(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
+                let path_ids = read_path_ids(&event);
+                let target_id = path_ids.first().cloned();
+                if let Ok(mut cb) = cb_pointer.try_borrow_mut() {
+                    cb(crate::dom::observer::CaptureEvent {
+                        kind: crate::dom::observer::CaptureEventKind::PointerDown {
+                            pointer_type: event.pointer_type(),
+                            client_x: f64::from(event.client_x()),
+                            client_y: f64::from(event.client_y()),
+                        },
+                        target_id,
+                        path_ids,
+                    });
+                }
+            });
+        let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
+            "pointerdown",
+            handler.as_ref().unchecked_ref(),
+            &capture_opts,
+        );
+        Some(handler)
+    } else {
+        None
+    };
+
+    let click_handler = if mask.contains(CaptureEventMask::CLICK) {
+        let cb_click = cb_cell.clone();
+        let handler =
+            Closure::<dyn Fn(web_sys::MouseEvent)>::new(move |event: web_sys::MouseEvent| {
+                let path_ids = read_path_ids(&event);
+                let target_id = path_ids.first().cloned();
+                if let Ok(mut cb) = cb_click.try_borrow_mut() {
+                    cb(crate::dom::observer::CaptureEvent {
+                        kind: crate::dom::observer::CaptureEventKind::Click {
+                            is_trusted: event.is_trusted(),
+                            detail: event.detail(),
+                            client_x: f64::from(event.client_x()),
+                            client_y: f64::from(event.client_y()),
+                        },
+                        target_id,
+                        path_ids,
+                    });
+                }
+            });
+        let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
+            "click",
+            handler.as_ref().unchecked_ref(),
+            &capture_opts,
+        );
+        Some(handler)
+    } else {
+        None
+    };
+
+    let focus_handler = if mask.contains(CaptureEventMask::FOCUS_IN) {
+        let cb_focus = cb_cell.clone();
+        let handler =
+            Closure::<dyn Fn(web_sys::FocusEvent)>::new(move |event: web_sys::FocusEvent| {
+                let path_ids = read_path_ids(&event);
+                let target_id = path_ids.first().cloned();
+                if let Ok(mut cb) = cb_focus.try_borrow_mut() {
+                    cb(crate::dom::observer::CaptureEvent {
+                        kind: crate::dom::observer::CaptureEventKind::FocusIn,
+                        target_id,
+                        path_ids,
+                    });
+                }
+            });
+        let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
+            "focusin",
+            handler.as_ref().unchecked_ref(),
+            &capture_opts,
+        );
+        Some(handler)
+    } else {
+        None
+    };
+
+    let key_handler = if mask.contains(CaptureEventMask::KEY_DOWN) {
+        let cb_key = cb_cell.clone();
+        let handler =
+            Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(move |event: web_sys::KeyboardEvent| {
+                let key = event.key();
+                let is_composing =
+                    event.is_composing() || event.key_code() == 229 || key == "Process";
+                let path_ids = read_path_ids(&event);
+                let target_id = path_ids.first().cloned();
+                if let Ok(mut cb) = cb_key.try_borrow_mut() {
+                    cb(crate::dom::observer::CaptureEvent {
+                        kind: crate::dom::observer::CaptureEventKind::KeyDown { key, is_composing },
+                        target_id,
+                        path_ids,
+                    });
+                }
+            });
+        let _ = doc_target.add_event_listener_with_callback_and_add_event_listener_options(
+            "keydown",
+            handler.as_ref().unchecked_ref(),
+            &capture_opts,
+        );
+        Some(handler)
+    } else {
+        None
+    };
 
     let doc_cleanup = doc_target.clone();
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(
@@ -941,26 +1161,34 @@ pub(crate) fn observe_capture_events(
         sub_id,
         None,
         move || {
-            let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
-                "pointerdown",
-                pointer_handler.as_ref().unchecked_ref(),
-                true,
-            );
-            let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
-                "click",
-                click_handler.as_ref().unchecked_ref(),
-                true,
-            );
-            let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
-                "focusin",
-                focus_handler.as_ref().unchecked_ref(),
-                true,
-            );
-            let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
-                "keydown",
-                key_handler.as_ref().unchecked_ref(),
-                true,
-            );
+            if let Some(pointer_handler) = pointer_handler {
+                let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
+                    "pointerdown",
+                    pointer_handler.as_ref().unchecked_ref(),
+                    true,
+                );
+            }
+            if let Some(click_handler) = click_handler {
+                let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
+                    "click",
+                    click_handler.as_ref().unchecked_ref(),
+                    true,
+                );
+            }
+            if let Some(focus_handler) = focus_handler {
+                let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
+                    "focusin",
+                    focus_handler.as_ref().unchecked_ref(),
+                    true,
+                );
+            }
+            if let Some(key_handler) = key_handler {
+                let _ = doc_cleanup.remove_event_listener_with_callback_and_bool(
+                    "keydown",
+                    key_handler.as_ref().unchecked_ref(),
+                    true,
+                );
+            }
         },
     ))
 }
@@ -994,7 +1222,7 @@ pub(crate) fn observe_transition_lifecycle(
         let cb_end = cb_cell.clone();
         let raf_end = raf_cell.clone();
         let listener_target = el.clone();
-        let on_end = Closure::<dyn FnMut(web_sys::AnimationEvent)>::new(
+        let on_end = Closure::<dyn Fn(web_sys::AnimationEvent)>::new(
             move |event: web_sys::AnimationEvent| {
                 if event
                     .target()
@@ -1002,9 +1230,12 @@ pub(crate) fn observe_transition_lifecycle(
                 {
                     return;
                 }
-                let cb: Option<LifecycleCallback> = cb_end.borrow_mut().take();
+                let cb: Option<LifecycleCallback> = cb_end
+                    .try_borrow_mut()
+                    .ok()
+                    .and_then(|mut c| c.take());
                 if let Some(mut cb) = cb {
-                    let _ = raf_end.borrow_mut().take();
+                    let _ = raf_end.try_borrow_mut().ok().and_then(|mut c| c.take());
                     cb(
                         crate::dom::observer::TransitionLifecycleEvent::AnimationEnd {
                             animation_name: event.animation_name(),
@@ -1021,7 +1252,7 @@ pub(crate) fn observe_transition_lifecycle(
         let cb_cancel = cb_cell.clone();
         let raf_cancel = raf_cell.clone();
         let listener_target = el.clone();
-        let on_cancel = Closure::<dyn FnMut(web_sys::AnimationEvent)>::new(
+        let on_cancel = Closure::<dyn Fn(web_sys::AnimationEvent)>::new(
             move |event: web_sys::AnimationEvent| {
                 if event
                     .target()
@@ -1032,9 +1263,12 @@ pub(crate) fn observe_transition_lifecycle(
                 if element_has_running_animations(&listener_target) == Some(true) {
                     return;
                 }
-                let cb: Option<LifecycleCallback> = cb_cancel.borrow_mut().take();
+                let cb: Option<LifecycleCallback> = cb_cancel
+                    .try_borrow_mut()
+                    .ok()
+                    .and_then(|mut c| c.take());
                 if let Some(mut cb) = cb {
-                    let _ = raf_cancel.borrow_mut().take();
+                    let _ = raf_cancel.try_borrow_mut().ok().and_then(|mut c| c.take());
                     cb(
                         crate::dom::observer::TransitionLifecycleEvent::AnimationCancel {
                             animation_name: event.animation_name(),
@@ -1052,7 +1286,7 @@ pub(crate) fn observe_transition_lifecycle(
         let cb_trans_end = cb_cell.clone();
         let raf_trans_end = raf_cell.clone();
         let listener_target = el.clone();
-        let on_trans_end = Closure::<dyn FnMut(web_sys::TransitionEvent)>::new(
+        let on_trans_end = Closure::<dyn Fn(web_sys::TransitionEvent)>::new(
             move |event: web_sys::TransitionEvent| {
                 if event
                     .target()
@@ -1060,9 +1294,15 @@ pub(crate) fn observe_transition_lifecycle(
                 {
                     return;
                 }
-                let cb: Option<LifecycleCallback> = cb_trans_end.borrow_mut().take();
+                let cb: Option<LifecycleCallback> = cb_trans_end
+                    .try_borrow_mut()
+                    .ok()
+                    .and_then(|mut c| c.take());
                 if let Some(mut cb) = cb {
-                    let _ = raf_trans_end.borrow_mut().take();
+                    let _ = raf_trans_end
+                        .try_borrow_mut()
+                        .ok()
+                        .and_then(|mut c| c.take());
                     cb(
                         crate::dom::observer::TransitionLifecycleEvent::TransitionEnd {
                             property_name: event.property_name(),
@@ -1080,7 +1320,7 @@ pub(crate) fn observe_transition_lifecycle(
         let cb_trans_cancel = cb_cell.clone();
         let raf_trans_cancel = raf_cell.clone();
         let listener_target = el.clone();
-        let on_trans_cancel = Closure::<dyn FnMut(web_sys::TransitionEvent)>::new(
+        let on_trans_cancel = Closure::<dyn Fn(web_sys::TransitionEvent)>::new(
             move |event: web_sys::TransitionEvent| {
                 if event
                     .target()
@@ -1091,9 +1331,15 @@ pub(crate) fn observe_transition_lifecycle(
                 if element_has_running_animations(&listener_target) == Some(true) {
                     return;
                 }
-                let cb: Option<LifecycleCallback> = cb_trans_cancel.borrow_mut().take();
+                let cb: Option<LifecycleCallback> = cb_trans_cancel
+                    .try_borrow_mut()
+                    .ok()
+                    .and_then(|mut c| c.take());
                 if let Some(mut cb) = cb {
-                    let _ = raf_trans_cancel.borrow_mut().take();
+                    let _ = raf_trans_cancel
+                        .try_borrow_mut()
+                        .ok()
+                        .and_then(|mut c| c.take());
                     cb(
                         crate::dom::observer::TransitionLifecycleEvent::TransitionCancel {
                             property_name: event.property_name(),
@@ -1120,11 +1366,14 @@ pub(crate) fn observe_transition_lifecycle(
             Some(crate::dom::observer::TransitionLifecycleEvent::Hidden)
         } else {
             let Some(element) = doc_frame.get_element_by_id(&element_id) else {
-                let cb: Option<LifecycleCallback> = cb_frame.borrow_mut().take();
+                let cb: Option<LifecycleCallback> = cb_frame
+                    .try_borrow_mut()
+                    .ok()
+                    .and_then(|mut c| c.take());
                 if let Some(mut cb) = cb {
                     cb(crate::dom::observer::TransitionLifecycleEvent::Missing);
                 }
-                let _ = raf_frame.borrow_mut().take();
+                let _ = raf_frame.try_borrow_mut().ok().and_then(|mut c| c.take());
                 return;
             };
             let Some(window) = web_sys::window() else {
@@ -1166,12 +1415,15 @@ pub(crate) fn observe_transition_lifecycle(
             }
         };
         if let Some(event) = event {
-            let cb: Option<LifecycleCallback> = cb_frame.borrow_mut().take();
+            let cb: Option<LifecycleCallback> = cb_frame
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut c| c.take());
             if let Some(mut cb) = cb {
                 cb(event);
             }
         }
-        let _ = raf_frame.borrow_mut().take();
+        let _ = raf_frame.try_borrow_mut().ok().and_then(|mut c| c.take());
     })
     .map_err(|_| crate::error::Error::Unsupported("Animation frame unavailable".into()))?;
     raf_cell.replace(Some(frame_guard));
@@ -1275,12 +1527,11 @@ fn style_has_active_motion(style: &web_sys::CssStyleDeclaration) -> bool {
 pub(crate) fn observe_form_reset(
     element_id: &str,
     form_id: Option<&str>,
-    mut callback: Box<dyn FnMut() + 'static>,
+    callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
 
-    let sub_id = crate::internal::next_subscription_id();
     let win =
         web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
     let doc = win
@@ -1308,13 +1559,17 @@ pub(crate) fn observe_form_reset(
     let Some(form) = form_el else {
         return Ok(crate::watcher_guard::WatcherGuard::new(
             "web_form_reset_noop",
-            sub_id,
+            0,
             None,
         ));
     };
 
-    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-        callback();
+    let sub_id = crate::internal::next_subscription_id();
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
+    let handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+            cb();
+        }
     });
 
     let target: web_sys::EventTarget = form.clone().into();
@@ -1332,7 +1587,7 @@ pub(crate) fn observe_form_reset(
 }
 
 pub(crate) fn observe_pointer_move(
-    mut callback: Box<dyn FnMut(f64, f64) + 'static>,
+    callback: Box<dyn FnMut(f64, f64) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
@@ -1344,9 +1599,12 @@ pub(crate) fn observe_pointer_move(
         .document()
         .ok_or_else(|| crate::error::Error::Unsupported("No document".into()))?;
 
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
     let handler =
-        Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
-            callback(f64::from(event.client_x()), f64::from(event.client_y()));
+        Closure::<dyn Fn(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
+            if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+                cb(f64::from(event.client_x()), f64::from(event.client_y()));
+            }
         });
 
     let opts = web_sys::AddEventListenerOptions::new();
@@ -1373,7 +1631,7 @@ pub(crate) fn observe_pointer_move(
 }
 
 pub(crate) fn observe_pointer_up(
-    mut callback: Box<dyn FnMut() + 'static>,
+    callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
@@ -1385,9 +1643,12 @@ pub(crate) fn observe_pointer_up(
         .document()
         .ok_or_else(|| crate::error::Error::Unsupported("No document".into()))?;
 
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
     let handler =
-        Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |_event: web_sys::PointerEvent| {
-            callback();
+        Closure::<dyn Fn(web_sys::PointerEvent)>::new(move |_event: web_sys::PointerEvent| {
+            if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+                cb();
+            }
         });
 
     let opts = web_sys::AddEventListenerOptions::new();
@@ -1414,7 +1675,7 @@ pub(crate) fn observe_pointer_up(
 }
 
 pub(crate) fn observe_window_blur(
-    mut callback: Box<dyn FnMut() + 'static>,
+    callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
@@ -1423,8 +1684,11 @@ pub(crate) fn observe_window_blur(
     let win =
         web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
 
-    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-        callback();
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
+    let handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+            cb();
+        }
     });
 
     let win_target: web_sys::EventTarget = win.into();
@@ -1442,7 +1706,7 @@ pub(crate) fn observe_window_blur(
 }
 
 pub(crate) fn observe_scroll(
-    mut callback: Box<dyn FnMut() + 'static>,
+    callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
@@ -1451,8 +1715,11 @@ pub(crate) fn observe_scroll(
     let win =
         web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
 
-    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-        callback();
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
+    let handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+            cb();
+        }
     });
 
     let capture_opts = web_sys::AddEventListenerOptions::new();
@@ -1481,16 +1748,20 @@ pub(crate) fn observe_scroll(
 }
 
 pub(crate) fn observe_viewport_scroll(
-    mut callback: Box<dyn FnMut() + 'static>,
+    callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
-    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
 
     let sub_id = crate::internal::next_subscription_id();
-    let win = web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
+    let win =
+        web_sys::window().ok_or_else(|| crate::error::Error::Unsupported("No window".into()))?;
 
-    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-        callback();
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
+    let handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+            cb();
+        }
     });
 
     let opts = web_sys::AddEventListenerOptions::new();
@@ -1520,7 +1791,7 @@ pub(crate) fn observe_viewport_scroll(
 
 pub(crate) fn observe_element_scroll(
     element_id: &str,
-    mut callback: Box<dyn FnMut() + 'static>,
+    callback: Box<dyn FnMut() + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
@@ -1535,8 +1806,11 @@ pub(crate) fn observe_element_scroll(
         .get_element_by_id(element_id)
         .ok_or_else(|| crate::error::Error::ElementNotFound(element_id.to_string()))?;
 
-    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-        callback();
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
+    let handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+            cb();
+        }
     });
 
     let opts = web_sys::AddEventListenerOptions::new();
@@ -1561,7 +1835,7 @@ pub(crate) fn observe_element_scroll(
 }
 
 pub(crate) fn observe_visibility_change(
-    mut callback: Box<dyn FnMut(crate::dom::observer::DocumentVisibility) + 'static>,
+    callback: Box<dyn FnMut(crate::dom::observer::DocumentVisibility) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
@@ -1576,8 +1850,9 @@ pub(crate) fn observe_visibility_change(
     let initial_hidden = doc.hidden() || doc.visibility_state() == web_sys::VisibilityState::Hidden;
     let last_hidden = std::cell::Cell::new(initial_hidden);
     let doc_for_cb = doc.clone();
+    let cb_cell = std::rc::Rc::new(std::cell::RefCell::new(callback));
 
-    let handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+    let handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_event: web_sys::Event| {
         let hidden = doc_for_cb.hidden()
             || doc_for_cb.visibility_state() == web_sys::VisibilityState::Hidden;
         if last_hidden.replace(hidden) != hidden {
@@ -1586,7 +1861,9 @@ pub(crate) fn observe_visibility_change(
             } else {
                 crate::dom::observer::DocumentVisibility::Visible
             };
-            callback(vis);
+            if let Ok(mut cb) = cb_cell.try_borrow_mut() {
+                cb(vis);
+            }
         }
     });
 
@@ -1630,30 +1907,29 @@ pub(crate) fn watch_image_load(
 
     let callback = std::rc::Rc::new(std::cell::RefCell::new(Some(callback)));
     let completed = std::rc::Rc::new(std::cell::Cell::new(false));
-    let finish = {
+    let finish = std::rc::Rc::new({
         let callback = callback.clone();
         let completed = completed.clone();
         move |status| {
             if completed.replace(true) {
                 return;
             }
-            if let Some(mut callback) = callback.borrow_mut().take() {
+            if let Some(mut callback) = callback
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut c| c.take())
+            {
                 callback(status);
             }
         }
-    };
-    let finish = std::rc::Rc::new(std::cell::RefCell::new(finish));
+    });
     let load_finish = finish.clone();
-    let load_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-        if let Ok(finish) = load_finish.try_borrow_mut() {
-            finish(crate::dom::observer::ImageLoadStatus::Loaded);
-        }
+    let load_handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
+        load_finish(crate::dom::observer::ImageLoadStatus::Loaded);
     });
     let error_finish = finish.clone();
-    let error_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-        if let Ok(finish) = error_finish.try_borrow_mut() {
-            finish(crate::dom::observer::ImageLoadStatus::Error);
-        }
+    let error_handler = Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
+        error_finish(crate::dom::observer::ImageLoadStatus::Error);
     });
     target
         .add_event_listener_with_callback("load", load_handler.as_ref().unchecked_ref())
@@ -1677,13 +1953,11 @@ pub(crate) fn watch_image_load(
     }
     image.set_src(src);
     if image.complete() {
-        if let Ok(finish) = finish.try_borrow_mut() {
-            finish(if image.natural_width() > 0 {
-                crate::dom::observer::ImageLoadStatus::Loaded
-            } else {
-                crate::dom::observer::ImageLoadStatus::Error
-            });
-        }
+        finish(if image.natural_width() > 0 {
+            crate::dom::observer::ImageLoadStatus::Loaded
+        } else {
+            crate::dom::observer::ImageLoadStatus::Error
+        });
     }
 
     let callback_cleanup = callback;

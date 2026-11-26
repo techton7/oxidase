@@ -91,7 +91,6 @@ pub fn watch_presence_with_options(
     mut on_event: impl FnMut(PresenceEvent) + 'static,
 ) -> Result<WatcherGuard> {
     let cycle_id = options.cycle_id;
-    let sub_id = crate::internal::next_subscription_id();
 
     // Pre-flight check: if active authoritative document exists and element is not in DOM, fall back immediately.
     // Non-authoritative ambient BaseDocument contexts proceed to transition lifecycle/fallback without premature unmounting.
@@ -103,8 +102,10 @@ pub fn watch_presence_with_options(
             cycle_id,
             reason: PresenceFallbackReason::Missing,
         });
-        return Ok(WatcherGuard::new("watch_presence_missing", sub_id, None));
+        return Ok(WatcherGuard::new("watch_presence_missing", 0, None));
     }
+
+    let sub_id = crate::internal::next_subscription_id();
 
     let mut finished = false;
 

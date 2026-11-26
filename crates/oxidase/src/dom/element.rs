@@ -1663,8 +1663,12 @@ pub fn pointer_event_target(evt: &dioxus::prelude::PointerData) -> Option<Elemen
         use wasm_bindgen::JsCast;
         let web_event = evt.downcast::<web_sys::PointerEvent>()?;
         let target = web_event.target()?;
-        let el = target.dyn_into::<web_sys::Element>().ok()?;
-        return Some(Element::from_web(el));
+        if let Ok(el) = target.clone().dyn_into::<web_sys::Element>() {
+            return Some(Element::from_web(el));
+        }
+        let node = target.dyn_into::<web_sys::Node>().ok()?;
+        let parent_el = node.parent_element()?;
+        return Some(Element::from_web(parent_el));
     }
     #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
     {

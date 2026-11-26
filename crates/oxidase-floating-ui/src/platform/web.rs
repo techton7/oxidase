@@ -367,6 +367,19 @@ impl WebFloatingPlatform {
 
     /// Computes the visible clipping boundary rect for an element constrained by boundary rules.
     pub fn get_clipping_rect(&self, element_id: &str, boundary: Boundary<String>) -> Result<Rect> {
+        if element_id == super::DOCUMENT_ELEMENT_SENTINEL {
+            return match boundary {
+                Boundary::ClippingAncestors | Boundary::RootViewport => get_viewport_rect(),
+                Boundary::Document => get_document_rect(),
+                Boundary::Custom(rect) => Ok(rect),
+                other => {
+                    let doc_el = get_document()?
+                        .document_element()
+                        .ok_or_else(|| Error::Unsupported("No documentElement".into()))?;
+                    get_clipping_rect(&doc_el, other)
+                }
+            };
+        }
         let element = get_element_by_id(element_id)?;
         get_clipping_rect(&element, boundary)
     }
@@ -528,6 +541,10 @@ impl Platform<String, ()> for WebFloatingPlatform {
 
     fn get_dimensions(&self, element: &String) -> Dimensions {
         FloatingPlatform::get_dimensions(self, element).unwrap_or_default()
+    }
+
+    fn get_document_element(&self, _element: &String) -> Option<String> {
+        Some(super::DOCUMENT_ELEMENT_SENTINEL.to_string())
     }
 
     fn is_rtl(&self, element: &String) -> Option<bool> {

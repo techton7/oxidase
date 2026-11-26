@@ -336,7 +336,10 @@ impl Document {
                     }
                     DomEventData::KeyDown(key_event) => {
                         use dioxus::prelude::keyboard_types::{Key, NamedKey};
-                        if matches!(&key_event.key, Key::Named(NamedKey::Enter))
+                        let is_composing = key_event.is_composing
+                            || matches!(&key_event.key, Key::Named(NamedKey::Process));
+                        if !is_composing
+                            && matches!(&key_event.key, Key::Named(NamedKey::Enter))
                             && let Ok(mut st) = click_state.try_borrow_mut()
                         {
                             st.armed_key_click = true;
@@ -346,7 +349,10 @@ impl Document {
                             Key::Named(named) => format!("{named:?}"),
                             Key::Character(s) => s.clone(),
                         };
-                        Some(crate::dom::observer::CaptureEventKind::KeyDown { key })
+                        Some(crate::dom::observer::CaptureEventKind::KeyDown {
+                            key,
+                            is_composing,
+                        })
                     }
                     _ => None,
                 }) else {
@@ -1431,6 +1437,7 @@ impl Document {
         _target_node_id: blitz_dom::NodeId,
         path_ids: Vec<String>,
     ) {
+        let event_mask = kind.mask();
         let target_id = path_ids.first().cloned();
         let event = crate::dom::observer::CaptureEvent {
             kind,
@@ -1441,7 +1448,11 @@ impl Document {
             let Ok(reg) = cell.try_borrow() else {
                 return Vec::new();
             };
-            reg.capture_observers.values().cloned().collect::<Vec<_>>()
+            reg.capture_observers
+                .values()
+                .filter(|entry| entry.mask.contains(event_mask))
+                .map(|entry| entry.callback.clone())
+                .collect::<Vec<_>>()
         });
         for handle in handles {
             if let Ok(mut cb) = handle.try_borrow_mut() {
@@ -2067,13 +2078,15 @@ struct ImageObserverEntry {
     callback: Rc<RefCell<Box<dyn FnMut(crate::dom::observer::ImageLoadStatus)>>>,
 }
 
+struct CaptureObserverEntry {
+    mask: crate::dom::observer::CaptureEventMask,
+    callback: Rc<RefCell<Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>>,
+}
+
 #[derive(Default)]
 struct NativeObserverRegistry {
     resize_observers: std::collections::HashMap<u64, ResizeObserverEntry>,
-    capture_observers: std::collections::HashMap<
-        u64,
-        Rc<RefCell<Box<dyn FnMut(crate::dom::observer::CaptureEvent)>>>,
-    >,
+    capture_observers: std::collections::HashMap<u64, CaptureObserverEntry>,
     pointer_move_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut(f64, f64)>>>>,
     pointer_up_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
     window_blur_observers: std::collections::HashMap<u64, Rc<RefCell<Box<dyn FnMut()>>>>,
@@ -2174,14 +2187,26 @@ pub(crate) fn observe_element_resize(
     )
 }
 
-pub(crate) fn observe_capture_events(
+pub(crate) fn observe_capture_events_with_mask(
+    mask: crate::dom::observer::CaptureEventMask,
     callback: Box<dyn FnMut(crate::dom::observer::CaptureEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
+    if mask.is_empty() {
+        return Ok(crate::watcher_guard::WatcherGuard::new(
+            "native_capture_observer_noop",
+            0,
+            None,
+        ));
+    }
     let sub_id = crate::internal::next_subscription_id();
     CURRENT_OBSERVERS.with(|cell| {
-        cell.borrow_mut()
-            .capture_observers
-            .insert(sub_id, Rc::new(RefCell::new(callback)));
+        cell.borrow_mut().capture_observers.insert(
+            sub_id,
+            CaptureObserverEntry {
+                mask,
+                callback: Rc::new(RefCell::new(callback)),
+            },
+        );
     });
 
     Ok(crate::watcher_guard::WatcherGuard::with_cleanup(

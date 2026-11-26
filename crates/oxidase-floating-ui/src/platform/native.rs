@@ -346,6 +346,27 @@ impl NativeFloatingPlatform {
 
     /// Computes the visible clipping boundary rect for an element constrained by boundary rules.
     pub fn get_clipping_rect(&self, element_id: &str, boundary: Boundary<String>) -> Result<Rect> {
+        if element_id == super::DOCUMENT_ELEMENT_SENTINEL {
+            let base = self.doc.try_borrow().map_err(|_| {
+                Error::Unsupported("Document currently mutably borrowed".to_string())
+            })?;
+            let vp_rect = get_root_viewport_rect(&base);
+            return match boundary {
+                Boundary::ClippingAncestors | Boundary::RootViewport | Boundary::Document => {
+                    Ok(vp_rect)
+                }
+                Boundary::Custom(rect) => Ok(rect),
+                other => {
+                    let root_id = base
+                        .try_root_element()
+                        .map(|root| root.id)
+                        .unwrap_or_else(|| base.root_node().id);
+                    get_clipping_rect_for_node_with_resolver(&base, root_id, other, |id| {
+                        self.get_element_by_id(id)
+                    })
+                }
+            };
+        }
         let node_id = self
             .get_element_by_id(element_id)
             .ok_or_else(|| Error::ElementNotFound(element_id.to_string()))?;
@@ -531,6 +552,15 @@ impl Platform<NodeId, ()> for NativeFloatingPlatform {
         Some(self.get_scale_by_node_id(*element))
     }
 
+    fn get_document_element(&self, _element: &NodeId) -> Option<NodeId> {
+        let base = self.doc.try_borrow().ok()?;
+        Some(
+            base.try_root_element()
+                .map(|root| root.id)
+                .unwrap_or_else(|| base.root_node().id),
+        )
+    }
+
     fn detect_overflow(
         &self,
         state: MiddlewareState<NodeId, ()>,
@@ -568,6 +598,10 @@ impl Platform<String, ()> for NativeFloatingPlatform {
 
     fn get_dimensions(&self, element: &String) -> Dimensions {
         FloatingPlatform::get_dimensions(self, element).unwrap_or_default()
+    }
+
+    fn get_document_element(&self, _element: &String) -> Option<String> {
+        Some(super::DOCUMENT_ELEMENT_SENTINEL.to_string())
     }
 
     fn is_rtl(&self, element: &String) -> Option<bool> {

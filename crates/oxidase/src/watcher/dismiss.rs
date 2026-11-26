@@ -5,7 +5,9 @@
 //! deduplication, touch-tap `< 10.0px` capture reconciliation, and untrusted click
 //! microtask deferral.
 
-use crate::dom::observer::{CaptureEventKind, observe_capture_events};
+use crate::dom::observer::{
+    CaptureEventKind, CaptureEventMask, observe_capture_events_with_mask,
+};
 use crate::error::Result;
 use crate::watcher_guard::WatcherGuard;
 use serde::{Deserialize, Serialize};
@@ -120,7 +122,18 @@ pub fn watch_document_dismiss_with_options(
     let active_for_cb = active.clone();
     let on_event_for_cb = on_event_cell.clone();
 
-    let inner_guard = observe_capture_events(move |event| {
+    let mut mask = CaptureEventMask::NONE;
+    if listen_pointer {
+        mask |= CaptureEventMask::POINTER_DOWN | CaptureEventMask::CLICK;
+    }
+    if listen_focusin {
+        mask |= CaptureEventMask::FOCUS_IN;
+    }
+    if listen_escape {
+        mask |= CaptureEventMask::KEY_DOWN;
+    }
+
+    let inner_guard = observe_capture_events_with_mask(mask, move |event| {
         if !active_for_cb.get() {
             return;
         }
@@ -237,16 +250,20 @@ pub fn watch_document_dismiss_with_options(
                         })
                         .is_none()
                         {
+                            use wasm_bindgen::JsCast;
                             use wasm_bindgen::closure::Closure;
                             let active_js = active_for_cb.clone();
                             let cb_js = on_event_for_cb.clone();
                             let holder: Rc<
-                                RefCell<Option<Closure<dyn FnMut(wasm_bindgen::JsValue)>>>,
+                                RefCell<Option<Closure<dyn Fn(wasm_bindgen::JsValue)>>>,
                             > = Rc::new(RefCell::new(None));
                             let holder_cleanup = holder.clone();
-                            let closure = Closure::<dyn FnMut(wasm_bindgen::JsValue)>::new(
+                            let closure = Closure::<dyn Fn(wasm_bindgen::JsValue)>::new(
                                 move |_val: wasm_bindgen::JsValue| {
-                                    let _ = holder_cleanup.borrow_mut().take();
+                                    let _held = holder_cleanup
+                                        .try_borrow_mut()
+                                        .ok()
+                                        .and_then(|mut c| c.take());
                                     if active_js.get()
                                         && let Ok(mut cb) = cb_js.try_borrow_mut()
                                     {
@@ -256,10 +273,18 @@ pub fn watch_document_dismiss_with_options(
                                     }
                                 },
                             );
-                            let _ =
-                                js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)
-                                    .then(&closure);
-                            *holder.borrow_mut() = Some(closure);
+                            let promise =
+                                js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED);
+                            if let Ok(then_val) = js_sys::Reflect::get(
+                                &promise,
+                                &wasm_bindgen::JsValue::from_str("then"),
+                            ) && let Ok(then_fn) = then_val.dyn_into::<js_sys::Function>()
+                            {
+                                let _ = then_fn.call1(&promise, closure.as_ref());
+                            }
+                            if let Ok(mut h) = holder.try_borrow_mut() {
+                                *h = Some(closure);
+                            }
                         }
                         return;
                     }
@@ -312,10 +337,10 @@ pub fn watch_document_dismiss_with_options(
                     });
                 }
             }
-            CaptureEventKind::KeyDown { key } => {
+            CaptureEventKind::KeyDown { key, is_composing } => {
                 pending_pointer_focus_path = None;
                 pending_touch_tap = None;
-                if !listen_escape {
+                if !listen_escape || is_composing {
                     return;
                 }
                 if (key == "Escape" || key == "Esc")

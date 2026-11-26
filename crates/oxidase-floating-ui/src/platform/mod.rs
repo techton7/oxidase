@@ -5,6 +5,8 @@
 
 pub use crate::types::FloatingPlatform;
 
+pub(crate) const DOCUMENT_ELEMENT_SENTINEL: &str = "__oxidase_document_element__";
+
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 

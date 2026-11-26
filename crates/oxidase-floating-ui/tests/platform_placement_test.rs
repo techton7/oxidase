@@ -468,3 +468,304 @@ fn test_double_correction_invariants() {
     assert_eq!(rects_from_string_platform.floating.width, 80.0);
     assert_eq!(rects_from_string_platform.floating.height, 60.0);
 }
+
+// FM-OX-3: VirtualElement (context_element: None & Some) + HideStrategy::{ReferenceHidden, Escaped}
+// on both Platform<String, ()> and Platform<NodeId, ()>.
+#[test]
+fn test_fm_ox_3_virtual_element_hide_reference_hidden_and_escaped() {
+    use oxidase_floating_ui::geometry::{ClientRectObject, DefaultVirtualElement, Rect, Strategy};
+    use oxidase_floating_ui::middleware::{HIDE_NAME, Hide, HideData, HideOptions, HideStrategy};
+    use std::rc::Rc;
+
+    let mut doc = BaseDocument::new(DocumentConfig::default());
+    {
+        let mut vp = doc.viewport_mut();
+        vp.window_size = (800, 600);
+        vp.hidpi_scale = 1.0;
+    }
+    let doc_root = doc.root_node().id;
+    let html_id = {
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("html")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "app-root".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "width: 800px; height: 600px; margin: 0; padding: 0; position: relative; display: block;".into(),
+                },
+            ],
+        );
+        mutator.append_children(doc_root, &[html]);
+        html
+    };
+
+    // Scroll container occupying (0, 0, 200, 200) inside the 800x600 viewport.
+    let scroll_id = {
+        let mut mutator = doc.mutate();
+        let sc = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "scroll-clip".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "position: absolute; left: 0px; top: 0px; width: 200px; height: 200px; overflow: scroll; display: block;".into(),
+                },
+            ],
+        );
+        mutator.append_children(html_id, &[sc]);
+        sc
+    };
+
+    // Context element and floating element inside the 200x200 scroll container.
+    let ctx_node_id = {
+        let mut mutator = doc.mutate();
+        let cid = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "ctx-el".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "position: absolute; left: 10px; top: 10px; width: 20px; height: 20px; display: block;".into(),
+                },
+            ],
+        );
+        mutator.append_children(scroll_id, &[cid]);
+        cid
+    };
+
+    let float_node_id = {
+        let mut mutator = doc.mutate();
+        let fid = mutator.create_element(
+            QualName::new(None, ns!(), local_name!("div")),
+            vec![
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("id")),
+                    value: "float".into(),
+                },
+                Attribute {
+                    name: QualName::new(None, ns!(), local_name!("style")),
+                    value: "position: absolute; left: 0px; top: 0px; width: 80px; height: 40px; display: block;".into(),
+                },
+            ],
+        );
+        mutator.append_children(scroll_id, &[fid]);
+        fid
+    };
+
+    doc.resolve(0.0);
+    let platform = NativeFloatingPlatform::from_base(doc);
+    let float_str = "float".to_string();
+
+    // 1. Virtual point inside viewport (at x=350, y=100, outside the 200x200 scroll container)
+    //    with context_element: None -> must clip against viewport (not float's scroll container)
+    //    and report reference_hidden = Some(false) and escaped = Some(false).
+    let in_vp_rect = ClientRectObject::from(Rect::new(350.0, 100.0, 10.0, 10.0));
+    let off_vp_rect = ClientRectObject::from(Rect::new(-120.0, 100.0, 10.0, 10.0));
+
+    // 1a. Platform<String, ()> — in-viewport ReferenceHidden & Escaped
+    let virt_str_in = DefaultVirtualElement::<String>::new(Rc::new({
+        let r = in_vp_rect.clone();
+        move || r.clone()
+    }));
+    let res_str_in_ref = compute_position::<String, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_str_in.clone())),
+        &float_str,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::ReferenceHidden),
+            ))]),
+    );
+    let hide_str_in_ref: HideData = res_str_in_ref
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_str_in_ref.reference_hidden, Some(false));
+
+    let res_str_in_esc = compute_position::<String, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_str_in)),
+        &float_str,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::Escaped),
+            ))]),
+    );
+    let hide_str_in_esc: HideData = res_str_in_esc
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_str_in_esc.escaped, Some(false));
+
+    // 1b. Platform<String, ()> — off-viewport ReferenceHidden & Escaped
+    let virt_str_off = DefaultVirtualElement::<String>::new(Rc::new({
+        let r = off_vp_rect.clone();
+        move || r.clone()
+    }));
+    let res_str_off_ref = compute_position::<String, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_str_off.clone())),
+        &float_str,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::ReferenceHidden),
+            ))]),
+    );
+    let hide_str_off_ref: HideData = res_str_off_ref
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_str_off_ref.reference_hidden, Some(true));
+
+    let res_str_off_esc = compute_position::<String, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_str_off)),
+        &float_str,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::Escaped),
+            ))]),
+    );
+    let hide_str_off_esc: HideData = res_str_off_esc
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_str_off_esc.escaped, Some(true));
+
+    // 2a. Platform<NodeId, ()> — in-viewport ReferenceHidden & Escaped
+    let virt_node_in = DefaultVirtualElement::<NodeId>::new(Rc::new({
+        let r = in_vp_rect.clone();
+        move || r.clone()
+    }));
+    let res_node_in_ref = compute_position::<NodeId, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_node_in.clone())),
+        &float_node_id,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::ReferenceHidden),
+            ))]),
+    );
+    let hide_node_in_ref: HideData = res_node_in_ref
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_node_in_ref.reference_hidden, Some(false));
+
+    let res_node_in_esc = compute_position::<NodeId, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_node_in)),
+        &float_node_id,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::Escaped),
+            ))]),
+    );
+    let hide_node_in_esc: HideData = res_node_in_esc
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_node_in_esc.escaped, Some(false));
+
+    // 2b. Platform<NodeId, ()> — off-viewport ReferenceHidden & Escaped
+    let virt_node_off = DefaultVirtualElement::<NodeId>::new(Rc::new({
+        let r = off_vp_rect.clone();
+        move || r.clone()
+    }));
+    let res_node_off_ref = compute_position::<NodeId, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_node_off.clone())),
+        &float_node_id,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::ReferenceHidden),
+            ))]),
+    );
+    let hide_node_off_ref: HideData = res_node_off_ref
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_node_off_ref.reference_hidden, Some(true));
+
+    let res_node_off_esc = compute_position::<NodeId, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_node_off)),
+        &float_node_id,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::Escaped),
+            ))]),
+    );
+    let hide_node_off_esc: HideData = res_node_off_esc
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(hide_node_off_esc.escaped, Some(true));
+
+    // 3. context_element: Some(...) still clips to its scroll container (200x200).
+    //    Point at (350, 100) is inside the 800x600 viewport, but outside the 200x200 container -> hidden!
+    let virt_str_ctx = DefaultVirtualElement::<String>::new(Rc::new({
+        let r = in_vp_rect.clone();
+        move || r.clone()
+    }))
+    .context_element("ctx-el".to_string());
+    let res_str_ctx = compute_position::<String, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_str_ctx)),
+        &float_str,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::ReferenceHidden),
+            ))]),
+    );
+    let hide_str_ctx: HideData = res_str_ctx
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(
+        hide_str_ctx.reference_hidden,
+        Some(true),
+        "context_element: Some(...) must still clip to enclosing scroll container on Platform<String>"
+    );
+
+    let virt_node_ctx = DefaultVirtualElement::<NodeId>::new(Rc::new(move || in_vp_rect.clone()))
+        .context_element(ctx_node_id);
+    let res_node_ctx = compute_position::<NodeId, ()>(
+        ElementOrVirtual::VirtualElement(Box::new(virt_node_ctx)),
+        &float_node_id,
+        ComputePositionConfig::new(&platform)
+            .placement(Placement::Bottom)
+            .strategy(Strategy::Fixed)
+            .middleware(vec![Box::new(Hide::new(
+                HideOptions::default().strategy(HideStrategy::ReferenceHidden),
+            ))]),
+    );
+    let hide_node_ctx: HideData = res_node_ctx
+        .middleware_data
+        .get_as(HIDE_NAME)
+        .expect("HideData present");
+    assert_eq!(
+        hide_node_ctx.reference_hidden,
+        Some(true),
+        "context_element: Some(...) must still clip to enclosing scroll container on Platform<NodeId>"
+    );
+}

@@ -84,9 +84,9 @@ impl WatcherGuard {
 
         if let Some(cleanup_fn) = self.custom_cleanup.take() {
             cleanup_fn();
+        } else if self.sub_id != 0 {
+            crate::internal::dispatch_cleanup(self.sub_id);
         }
-
-        crate::internal::dispatch_cleanup(self.sub_id);
     }
 }
 

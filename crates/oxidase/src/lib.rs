@@ -146,6 +146,15 @@ pub mod internal {
     pub static GLOBAL_EPOCH: AtomicU64 = AtomicU64::new(1);
     static NEXT_SUB_ID: AtomicU64 = AtomicU64::new(1);
 
+    std::thread_local! {
+        static DISPATCH_CLEANUP_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    #[inline]
+    pub fn dispatch_cleanup_call_count() -> u64 {
+        DISPATCH_CLEANUP_CALLS.with(|c| c.get())
+    }
+
     #[inline]
     pub fn current_epoch() -> u64 {
         GLOBAL_EPOCH.load(Ordering::Acquire)
@@ -157,6 +166,7 @@ pub mod internal {
     }
 
     pub fn dispatch_cleanup(sub_id: u64) {
+        DISPATCH_CLEANUP_CALLS.with(|c| c.set(c.get().wrapping_add(1)));
         #[cfg(target_arch = "wasm32")]
         {
             let script = format!(

@@ -310,7 +310,8 @@ pub(crate) fn observe_element_resize(
     ))
 }
 
-pub(crate) fn observe_capture_events(
+pub(crate) fn observe_capture_events_with_mask(
+    _mask: crate::dom::observer::CaptureEventMask,
     _callback: Box<dyn FnMut(crate::dom::observer::CaptureEvent) + 'static>,
 ) -> crate::error::Result<crate::watcher_guard::WatcherGuard> {
     Ok(crate::watcher_guard::WatcherGuard::new(
